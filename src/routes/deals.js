@@ -47,6 +47,18 @@ router.get('/', async (req, res) => {
   res.json(data);
 });
 
+// GET /api/deals/:id
+router.get('/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('deals')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+
+  if (error) return res.status(404).json({ error: 'Deal not found' });
+  res.json(data);
+});
+
 // POST /api/deals/:id/ship
 router.post('/:id/ship', async (req, res) => {
   const { id } = req.params;
