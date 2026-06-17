@@ -1,31 +1,44 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
+const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
-  ConversationsQuerySchema,
   CreateConversationSchema,
   MessagesQuerySchema,
   CreateMessageSchema,
 } = require('../validation/schemas');
 const router = Router();
 
-// GET /api/chat/conversations?userId=
-router.get('/conversations', validate(ConversationsQuerySchema, 'query'), async (req, res) => {
-  const { userId } = req.query;
+function resolveUser(wallet, res) {
+  return supabase.from('users').select('id').eq('wallet', wallet).single().then(({ data }) => {
+    if (!data) { res.status(403).json({ error: 'User profile not found — create your profile first' }); return null; }
+    return data;
+  });
+}
+
+// GET /api/chat/conversations — scoped to the authenticated wallet
+router.get('/conversations', requireAuth, async (req, res) => {
+  const user = await resolveUser(req.wallet, res);
+  if (!user) return;
 
   const { data, error } = await supabase
     .from('conversations')
     .select('*, listings(title, image_url)')
-    .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+    .or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
     .order('last_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// POST /api/chat/conversations — create or find existing
-router.post('/conversations', validate(CreateConversationSchema), async (req, res) => {
+// POST /api/chat/conversations
+router.post('/conversations', requireAuth, validate(CreateConversationSchema), async (req, res) => {
   const { listing_id, buyer_id, seller_id } = req.body;
+
+  const user = await resolveUser(req.wallet, res);
+  if (!user) return;
+  if (user.id !== buyer_id && user.id !== seller_id)
+    return res.status(403).json({ error: 'Must be buyer or seller to create conversation' });
 
   const { data: existing } = await supabase
     .from('conversations')
@@ -46,8 +59,17 @@ router.post('/conversations', validate(CreateConversationSchema), async (req, re
 });
 
 // GET /api/chat/messages?conversationId=
-router.get('/messages', validate(MessagesQuerySchema, 'query'), async (req, res) => {
+router.get('/messages', requireAuth, validate(MessagesQuerySchema, 'query'), async (req, res) => {
   const { conversationId } = req.query;
+
+  const user = await resolveUser(req.wallet, res);
+  if (!user) return;
+
+  const { data: conv } = await supabase
+    .from('conversations').select('buyer_id, seller_id').eq('id', conversationId).single();
+  if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+  if (conv.buyer_id !== user.id && conv.seller_id !== user.id)
+    return res.status(403).json({ error: 'Access denied' });
 
   const { data, error } = await supabase
     .from('messages')
@@ -60,8 +82,13 @@ router.get('/messages', validate(MessagesQuerySchema, 'query'), async (req, res)
 });
 
 // POST /api/chat/messages
-router.post('/messages', validate(CreateMessageSchema), async (req, res) => {
+router.post('/messages', requireAuth, validate(CreateMessageSchema), async (req, res) => {
   const { conversation_id, sender_id, type, body, offer_amount } = req.body;
+
+  const user = await resolveUser(req.wallet, res);
+  if (!user) return;
+  if (user.id !== sender_id)
+    return res.status(403).json({ error: 'sender_id does not match authenticated user' });
 
   const { data, error } = await supabase
     .from('messages')
