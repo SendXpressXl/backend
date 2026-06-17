@@ -1,13 +1,14 @@
 const { Router } = require('express');
+const { escape } = require('html-escaper');
 const supabase   = require('../config/supabase');
+const { validate } = require('../middleware/validate');
+const { IdParamSchema, PostsQuerySchema, CreatePostSchema } = require('../validation/schemas');
 const router = Router();
 
-const PAGE_SIZE = 20;
-
 // GET /api/posts?cursor=<created_at>&limit=<n>
-router.get('/', async (req, res) => {
-  const { cursor, limit } = req.query;
-  const pageSize = Math.min(parseInt(limit) || PAGE_SIZE, 50);
+router.get('/', validate(PostsQuerySchema, 'query'), async (req, res) => {
+  const { cursor, limit } = req.query; // validated: cursor is ISO-8601, limit ∈ [1, 50]
+  const pageSize = limit;
 
   let query = supabase
     .from('posts')
@@ -28,14 +29,21 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/posts
-router.post('/', async (req, res) => {
+router.post('/', validate(CreatePostSchema), async (req, res) => {
   const { user_id, text, image_url, tagged_listing_id } = req.body;
-  if (!user_id || !text) return res.status(400).json({ error: 'user_id and text are required' });
-  if (text.length > 2000) return res.status(400).json({ error: 'text exceeds 2000 character limit' });
+
+  // HTML-encode user-supplied text before storage to neutralise stored XSS.
+  // ASSUMPTION: the rendering layer is an HTML/browser context. This trades a
+  // little fidelity for safety — non-HTML consumers (mobile, plain-text email,
+  // PDF) receive encoded entities, and re-encoding elsewhere risks double
+  // encoding. The cleaner long-term approach is encode-on-output plus a CSP
+  // header; this stays here so the backend is safe by default regardless of
+  // what any single client does.
+  const safeText = escape(text);
 
   const { data, error } = await supabase
     .from('posts')
-    .insert({ user_id, text, image_url, tagged_listing_id })
+    .insert({ user_id, text: safeText, image_url, tagged_listing_id })
     .select()
     .single();
 
@@ -44,7 +52,7 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/posts/:id/like
-router.post('/:id/like', async (req, res) => {
+router.post('/:id/like', validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
 
   const { data: post, error: fetchErr } = await supabase

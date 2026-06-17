@@ -1,5 +1,7 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
+const { validate } = require('../middleware/validate');
+const { CreateUserSchema, RoleSchema } = require('../validation/schemas');
 const router = Router();
 
 // GET /api/users/:wallet
@@ -17,9 +19,8 @@ router.get('/:wallet', async (req, res) => {
 });
 
 // POST /api/users — create or return existing user by wallet
-router.post('/', async (req, res) => {
+router.post('/', validate(CreateUserSchema), async (req, res) => {
   const { wallet, handle, display_name, avatar_url } = req.body;
-  if (!wallet) return res.status(400).json({ error: 'wallet is required' });
 
   const { data: existing } = await supabase
     .from('users').select('*').eq('wallet', wallet).single();
@@ -36,12 +37,9 @@ router.post('/', async (req, res) => {
 });
 
 // PATCH /api/users/:id/role
-router.patch('/:id/role', async (req, res) => {
+router.patch('/:id/role', validate(RoleSchema), async (req, res) => {
   const { id } = req.params;
   const { role } = req.body;
-
-  if (!['buyer', 'seller', 'both'].includes(role))
-    return res.status(400).json({ error: 'role must be buyer, seller, or both' });
 
   const { data, error } = await supabase
     .from('users')

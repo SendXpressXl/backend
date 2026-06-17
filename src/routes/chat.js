@@ -1,11 +1,17 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
+const { validate } = require('../middleware/validate');
+const {
+  ConversationsQuerySchema,
+  CreateConversationSchema,
+  MessagesQuerySchema,
+  CreateMessageSchema,
+} = require('../validation/schemas');
 const router = Router();
 
 // GET /api/chat/conversations?userId=
-router.get('/conversations', async (req, res) => {
+router.get('/conversations', validate(ConversationsQuerySchema, 'query'), async (req, res) => {
   const { userId } = req.query;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
 
   const { data, error } = await supabase
     .from('conversations')
@@ -18,10 +24,8 @@ router.get('/conversations', async (req, res) => {
 });
 
 // POST /api/chat/conversations — create or find existing
-router.post('/conversations', async (req, res) => {
+router.post('/conversations', validate(CreateConversationSchema), async (req, res) => {
   const { listing_id, buyer_id, seller_id } = req.body;
-  if (!listing_id || !buyer_id || !seller_id)
-    return res.status(400).json({ error: 'listing_id, buyer_id, and seller_id are required' });
 
   const { data: existing } = await supabase
     .from('conversations')
@@ -42,9 +46,8 @@ router.post('/conversations', async (req, res) => {
 });
 
 // GET /api/chat/messages?conversationId=
-router.get('/messages', async (req, res) => {
+router.get('/messages', validate(MessagesQuerySchema, 'query'), async (req, res) => {
   const { conversationId } = req.query;
-  if (!conversationId) return res.status(400).json({ error: 'conversationId required' });
 
   const { data, error } = await supabase
     .from('messages')
@@ -57,10 +60,8 @@ router.get('/messages', async (req, res) => {
 });
 
 // POST /api/chat/messages
-router.post('/messages', async (req, res) => {
+router.post('/messages', validate(CreateMessageSchema), async (req, res) => {
   const { conversation_id, sender_id, type, body, offer_amount } = req.body;
-  if (!conversation_id || !sender_id || !body)
-    return res.status(400).json({ error: 'conversation_id, sender_id, and body are required' });
 
   const { data, error } = await supabase
     .from('messages')

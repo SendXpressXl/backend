@@ -1,41 +1,57 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
 const { lockFunds, releaseFunds, refund } = require('../services/escrow');
+const { validate } = require('../middleware/validate');
+const {
+  IdParamSchema,
+  DealsQuerySchema,
+  BuyerSecretHeaderSchema,
+  CreateDealSchema,
+  ShipDealSchema,
+  ConfirmDealSchema,
+  CancelDealSchema,
+  DisputeDealSchema,
+} = require('../validation/schemas');
 const router = Router();
 
 const ESCROW_SECRET = process.env.ESCROW_SECRET_KEY;
 const ESCROW_PUBLIC = process.env.ESCROW_PUBLIC_KEY;
 
 // POST /api/deals
-router.post('/', async (req, res) => {
-  const { buyerSecret, seller, amount, description } = req.body;
-  if (!buyerSecret || !seller || !amount || !description)
-    return res.status(400).json({ error: 'Missing required fields' });
+// The buyer secret is taken from the redactable `x-buyer-secret` header, never
+// the JSON body, so it does not land in request/error logs verbatim.
+router.post(
+  '/',
+  validate(BuyerSecretHeaderSchema, 'headers'),
+  validate(CreateDealSchema),
+  async (req, res) => {
+    const buyerSecret = req.headers['x-buyer-secret'];
+    const { seller, amount, description } = req.body;
 
-  try {
-    const { StellarSdk } = require('../config/stellar');
-    const buyerPublic = StellarSdk.Keypair.fromSecret(buyerSecret).publicKey();
+    try {
+      const { StellarSdk } = require('../config/stellar');
+      const buyerPublic = StellarSdk.Keypair.fromSecret(buyerSecret).publicKey();
 
-    const { data: deal, error } = await supabase
-      .from('deals')
-      .insert({ buyer: buyerPublic, seller, amount, description, status: 'created' })
-      .select()
-      .single();
-    if (error) throw error;
+      const { data: deal, error } = await supabase
+        .from('deals')
+        .insert({ buyer: buyerPublic, seller, amount, description, status: 'created' })
+        .select()
+        .single();
+      if (error) throw error;
 
-    const txHash = await lockFunds(buyerSecret, ESCROW_PUBLIC, amount, deal.id);
-    await supabase.from('deals').update({ tx_hash: txHash }).eq('id', deal.id);
+      const txHash = await lockFunds(buyerSecret, ESCROW_PUBLIC, amount, deal.id);
+      await supabase.from('deals').update({ tx_hash: txHash }).eq('id', deal.id);
 
-    res.status(201).json({ ...deal, tx_hash: txHash });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+      res.status(201).json({ ...deal, tx_hash: txHash });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 // GET /api/deals?userId=
-router.get('/', async (req, res) => {
+router.get('/', validate(DealsQuerySchema, 'query'), async (req, res) => {
   const { userId } = req.query;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
 
   const { data, error } = await supabase
     .from('deals')
@@ -48,7 +64,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/deals/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', validate(IdParamSchema, 'params'), async (req, res) => {
   const { data, error } = await supabase
     .from('deals')
     .select('*')
@@ -60,7 +76,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/deals/:id/ship
-router.post('/:id/ship', async (req, res) => {
+router.post('/:id/ship', validate(IdParamSchema, 'params'), validate(ShipDealSchema), async (req, res) => {
   const { id } = req.params;
   const { sellerId } = req.body;
 
@@ -78,7 +94,7 @@ router.post('/:id/ship', async (req, res) => {
 });
 
 // POST /api/deals/:id/confirm
-router.post('/:id/confirm', async (req, res) => {
+router.post('/:id/confirm', validate(IdParamSchema, 'params'), validate(ConfirmDealSchema), async (req, res) => {
   const { id } = req.params;
   const { buyerId } = req.body;
 
@@ -126,7 +142,7 @@ router.post('/:id/confirm', async (req, res) => {
 });
 
 // POST /api/deals/:id/dispute
-router.post('/:id/dispute', async (req, res) => {
+router.post('/:id/dispute', validate(IdParamSchema, 'params'), validate(DisputeDealSchema), async (req, res) => {
   const { id } = req.params;
   const { callerId } = req.body;
 
@@ -146,7 +162,7 @@ router.post('/:id/dispute', async (req, res) => {
 });
 
 // POST /api/deals/:id/cancel
-router.post('/:id/cancel', async (req, res) => {
+router.post('/:id/cancel', validate(IdParamSchema, 'params'), validate(CancelDealSchema), async (req, res) => {
   const { id } = req.params;
   const { buyerId } = req.body;
 
