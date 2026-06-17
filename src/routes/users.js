@@ -31,7 +31,7 @@ router.post('/', async (req, res) => {
     .select()
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return res.status(500).json({ error: 'Internal server error' });
   res.status(201).json(data);
 });
 
@@ -50,7 +50,7 @@ router.patch('/:id/role', async (req, res) => {
     .select()
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return res.status(500).json({ error: 'Internal server error' });
   res.json(data);
 });
 
