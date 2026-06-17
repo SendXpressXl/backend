@@ -7,7 +7,7 @@ const postsRouter    = require('./routes/posts');
 const listingsRouter = require('./routes/listings');
 const chatRouter     = require('./routes/chat');
 const dealsRouter    = require('./routes/deals');
-const { issueChallenge, verifySignature } = require('./middleware/auth');
+const { issueChallenge, verifySignature, requireAuth, logout } = require('./middleware/auth');
 const { rateLimit } = require('./middleware/rateLimit');
 
 const app = express();
@@ -19,6 +19,7 @@ app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 
 app.get('/api/auth/challenge', issueChallenge);
 app.post('/api/auth/verify',   verifySignature);
+app.post('/api/auth/logout',   requireAuth, logout);
 
 app.use('/api/users',    usersRouter);
 app.use('/api/posts',    postsRouter);

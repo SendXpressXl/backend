@@ -1,89 +1,99 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
-const { lockFunds, releaseFunds, refund } = require('../services/escrow');
+const { buildLockTx, submitSignedTx, releaseFunds, refund } = require('../services/escrow');
+const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const {
-  IdParamSchema,
-  DealsQuerySchema,
-  BuyerSecretHeaderSchema,
-  CreateDealSchema,
-  ShipDealSchema,
-  ConfirmDealSchema,
-  CancelDealSchema,
-  DisputeDealSchema,
-} = require('../validation/schemas');
+const { StellarSdk, networkPassphrase } = require('../config/stellar');
+const { IdParamSchema, CreateDealSchema } = require('../validation/schemas');
 const router = Router();
 
 const ESCROW_SECRET = process.env.ESCROW_SECRET_KEY;
 const ESCROW_PUBLIC = process.env.ESCROW_PUBLIC_KEY;
 
-// POST /api/deals
-// The buyer secret is taken from the redactable `x-buyer-secret` header, never
-// the JSON body, so it does not land in request/error logs verbatim.
-router.post(
-  '/',
-  validate(BuyerSecretHeaderSchema, 'headers'),
-  validate(CreateDealSchema),
-  async (req, res) => {
-    const buyerSecret = req.headers['x-buyer-secret'];
-    const { seller, amount, description } = req.body;
+// GET /api/deals/build-lock-tx?seller=&amount=
+// Returns an unsigned XDR the buyer can sign client-side.
+router.get('/build-lock-tx', requireAuth, async (req, res) => {
+  const { seller, amount } = req.query;
+  if (!seller || !amount) return res.status(400).json({ error: 'seller and amount are required' });
+  if (Number(amount) <= 0) return res.status(400).json({ error: 'amount must be a positive number' });
+  try {
+    const xdr = await buildLockTx(req.wallet, ESCROW_PUBLIC, amount);
+    res.json({ xdr });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
-    try {
-      const { StellarSdk } = require('../config/stellar');
-      const buyerPublic = StellarSdk.Keypair.fromSecret(buyerSecret).publicKey();
+// POST /api/deals — buyer submits a signed XDR envelope; secret never reaches server
+router.post('/', requireAuth, validate(CreateDealSchema), async (req, res) => {
+  const { signedXdr, seller, amount, description } = req.body;
+  try {
+    // Parse the signed XDR with the SDK v10+ API
+    const tx          = new StellarSdk.Transaction(signedXdr, networkPassphrase);
+    const buyerPublic = tx.source;
 
-      const { data: deal, error } = await supabase
-        .from('deals')
-        .insert({ buyer: buyerPublic, seller, amount, description, status: 'created' })
-        .select()
-        .single();
-      if (error) throw error;
+    // Verify the transaction was signed by the authenticated wallet
+    if (buyerPublic !== req.wallet)
+      return res.status(403).json({ error: 'Transaction source does not match authenticated wallet' });
 
-      const txHash = await lockFunds(buyerSecret, ESCROW_PUBLIC, amount, deal.id);
-      await supabase.from('deals').update({ tx_hash: txHash }).eq('id', deal.id);
+    // Validate that the XDR contains exactly the payment we expect
+    const ops = tx.operations;
+    if (ops.length !== 1 || ops[0].type !== 'payment')
+      return res.status(400).json({ error: 'XDR must contain exactly one payment operation' });
+    if (ops[0].destination !== ESCROW_PUBLIC)
+      return res.status(400).json({ error: 'Payment destination must be the escrow account' });
+    if (!ops[0].asset.isNative())
+      return res.status(400).json({ error: 'Payment must be in native XLM' });
+    if (ops[0].amount !== String(amount))
+      return res.status(400).json({ error: 'Payment amount does not match declared deal amount' });
 
-      res.status(201).json({ ...deal, tx_hash: txHash });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  },
-);
+    // Submit the Stellar transaction BEFORE writing to the database.
+    // If submission fails, no orphaned deal record is created.
+    const txHash = await submitSignedTx(signedXdr);
 
-// GET /api/deals?userId=
-router.get('/', validate(DealsQuerySchema, 'query'), async (req, res) => {
-  const { userId } = req.query;
+    const { data: deal, error } = await supabase
+      .from('deals')
+      .insert({ buyer: buyerPublic, seller, amount, description, status: 'created', tx_hash: txHash })
+      .select()
+      .single();
+    if (error) throw error;
 
+    res.status(201).json(deal);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/deals — scoped to the authenticated wallet
+router.get('/', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('deals')
     .select('*')
-    .or(`buyer.eq.${userId},seller.eq.${userId}`)
+    .or(`buyer.eq.${req.wallet},seller.eq.${req.wallet}`)
     .order('created_at', { ascending: false });
-
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
 // GET /api/deals/:id
-router.get('/:id', validate(IdParamSchema, 'params'), async (req, res) => {
+router.get('/:id', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { data, error } = await supabase
     .from('deals')
     .select('*')
     .eq('id', req.params.id)
     .single();
-
   if (error) return res.status(404).json({ error: 'Deal not found' });
+  if (data.buyer !== req.wallet && data.seller !== req.wallet)
+    return res.status(403).json({ error: 'Access denied' });
   res.json(data);
 });
 
 // POST /api/deals/:id/ship
-router.post('/:id/ship', validate(IdParamSchema, 'params'), validate(ShipDealSchema), async (req, res) => {
+router.post('/:id/ship', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
-  const { sellerId } = req.body;
 
   const { data: deal, error: fetchErr } = await supabase
     .from('deals').select('*').eq('id', id).single();
   if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.seller !== sellerId) return res.status(403).json({ error: 'Not the seller' });
+  if (deal.seller !== req.wallet) return res.status(403).json({ error: 'Not the seller' });
   if (deal.status !== 'created') return res.status(400).json({ error: 'Invalid deal status' });
 
   const { error } = await supabase
@@ -94,14 +104,13 @@ router.post('/:id/ship', validate(IdParamSchema, 'params'), validate(ShipDealSch
 });
 
 // POST /api/deals/:id/confirm
-router.post('/:id/confirm', validate(IdParamSchema, 'params'), validate(ConfirmDealSchema), async (req, res) => {
+router.post('/:id/confirm', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
-  const { buyerId } = req.body;
 
   const { data: deal, error: fetchErr } = await supabase
     .from('deals').select('*').eq('id', id).single();
   if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.buyer !== buyerId) return res.status(403).json({ error: 'Not the buyer' });
+  if (deal.buyer !== req.wallet) return res.status(403).json({ error: 'Not the buyer' });
 
   if (deal.status === 'confirmed') {
     return res.json({ success: true, status: 'confirmed', tx_hash: deal.release_tx });
@@ -142,14 +151,13 @@ router.post('/:id/confirm', validate(IdParamSchema, 'params'), validate(ConfirmD
 });
 
 // POST /api/deals/:id/dispute
-router.post('/:id/dispute', validate(IdParamSchema, 'params'), validate(DisputeDealSchema), async (req, res) => {
+router.post('/:id/dispute', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
-  const { callerId } = req.body;
 
   const { data: deal, error: fetchErr } = await supabase
     .from('deals').select('*').eq('id', id).single();
   if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.buyer !== callerId && deal.seller !== callerId)
+  if (deal.buyer !== req.wallet && deal.seller !== req.wallet)
     return res.status(403).json({ error: 'Unauthorized' });
   if (!['created', 'shipped'].includes(deal.status))
     return res.status(400).json({ error: 'Invalid deal status' });
@@ -162,14 +170,13 @@ router.post('/:id/dispute', validate(IdParamSchema, 'params'), validate(DisputeD
 });
 
 // POST /api/deals/:id/cancel
-router.post('/:id/cancel', validate(IdParamSchema, 'params'), validate(CancelDealSchema), async (req, res) => {
+router.post('/:id/cancel', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
-  const { buyerId } = req.body;
 
   const { data: deal, error: fetchErr } = await supabase
     .from('deals').select('*').eq('id', id).single();
   if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.buyer !== buyerId) return res.status(403).json({ error: 'Not the buyer' });
+  if (deal.buyer !== req.wallet) return res.status(403).json({ error: 'Not the buyer' });
 
   if (deal.status === 'cancelled') {
     return res.json({ success: true, status: 'cancelled', tx_hash: deal.refund_tx });

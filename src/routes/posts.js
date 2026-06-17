@@ -1,20 +1,21 @@
 const { Router } = require('express');
 const { escape } = require('html-escaper');
 const supabase   = require('../config/supabase');
+const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { IdParamSchema, PostsQuerySchema, CreatePostSchema } = require('../validation/schemas');
+const { IdParamSchema, PostsQuerySchema } = require('../validation/schemas');
 const router = Router();
 
-// GET /api/posts?cursor=<created_at>&limit=<n>
+// GET /api/posts
 router.get('/', validate(PostsQuerySchema, 'query'), async (req, res) => {
-  const { cursor, limit } = req.query; // validated: cursor is ISO-8601, limit ∈ [1, 50]
+  const { cursor, limit } = req.query;
   const pageSize = limit;
 
   let query = supabase
     .from('posts')
     .select('*, users(handle, display_name, avatar_url)')
     .order('created_at', { ascending: false })
-    .limit(pageSize + 1); // fetch one extra to determine if there's a next page
+    .limit(pageSize + 1);
 
   if (cursor) query = query.lt('created_at', cursor);
 
@@ -29,21 +30,22 @@ router.get('/', validate(PostsQuerySchema, 'query'), async (req, res) => {
 });
 
 // POST /api/posts
-router.post('/', validate(CreatePostSchema), async (req, res) => {
-  const { user_id, text, image_url, tagged_listing_id } = req.body;
+router.post('/', requireAuth, async (req, res) => {
+  const { text, image_url, tagged_listing_id } = req.body;
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  if (text.length > 2000) return res.status(400).json({ error: 'text exceeds 2000 character limit' });
 
-  // HTML-encode user-supplied text before storage to neutralise stored XSS.
-  // ASSUMPTION: the rendering layer is an HTML/browser context. This trades a
-  // little fidelity for safety — non-HTML consumers (mobile, plain-text email,
-  // PDF) receive encoded entities, and re-encoding elsewhere risks double
-  // encoding. The cleaner long-term approach is encode-on-output plus a CSP
-  // header; this stays here so the backend is safe by default regardless of
-  // what any single client does.
+  // Derive user_id from the authenticated wallet — any user_id in the body is ignored
+  const { data: user } = await supabase
+    .from('users').select('id').eq('wallet', req.wallet).single();
+  if (!user) return res.status(403).json({ error: 'User profile not found — create your profile first' });
+
+  // HTML-encode user-supplied text to neutralise stored XSS
   const safeText = escape(text);
 
   const { data, error } = await supabase
     .from('posts')
-    .insert({ user_id, text: safeText, image_url, tagged_listing_id })
+    .insert({ user_id: user.id, text: safeText, image_url, tagged_listing_id })
     .select()
     .single();
 
@@ -52,7 +54,7 @@ router.post('/', validate(CreatePostSchema), async (req, res) => {
 });
 
 // POST /api/posts/:id/like
-router.post('/:id/like', validate(IdParamSchema, 'params'), async (req, res) => {
+router.post('/:id/like', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
 
   const { data: post, error: fetchErr } = await supabase

@@ -11,17 +11,15 @@ test('GET /api/listings rejects invalid category', async () => {
   assert.ok(body.details.fieldErrors.category);
 });
 
-test('POST /api/listings requires seller_id, title, and price', async () => {
+test('POST /api/listings returns 401 without Authorization header', async () => {
   const res = await fetch(`${BASE}/listings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: 'test' }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Test', price: 10 }),
   });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 401);
 });
 
-test('GET /api/listings/:id returns 404 for unknown id', async () => {
-  // A well-formed UUID that does not exist — passes param validation, then 404s.
+test('GET /api/listings/:id returns 404 for valid UUID that does not exist', async () => {
   const res = await fetch(`${BASE}/listings/00000000-0000-4000-8000-000000000000`);
   assert.equal(res.status, 404);
 });
