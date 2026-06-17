@@ -1,39 +1,60 @@
-const { StellarSdk } = require('../config/stellar');
+const { randomBytes } = require('crypto');
+const { StellarSdk }  = require('../config/stellar');
+const supabase        = require('../config/supabase');
 
-const challenges = new Map();
+const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * GET /api/auth/challenge?wallet= — issue a nonce for the wallet to sign
+ * Persist a nonce for the wallet in the auth_challenges table.
+ * Uses upsert so a repeated challenge request replaces the old one.
  */
-function issueChallenge(req, res) {
+async function issueChallenge(req, res) {
   const { wallet } = req.query;
   if (!wallet) return res.status(400).json({ error: 'wallet required' });
 
-  const nonce = `sendxpress:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-  challenges.set(wallet, { nonce, expires: Date.now() + 60_000 });
+  const nonce      = randomBytes(32).toString('hex');
+  const expiresAt  = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
+
+  const { error } = await supabase
+    .from('auth_challenges')
+    .upsert({ wallet_address: wallet, nonce, expires_at: expiresAt });
+
+  if (error) return res.status(500).json({ error: 'Internal server error' });
+
   res.json({ nonce });
 }
 
 /**
- * POST /api/auth/verify — verify signed nonce, return wallet address
+ * Verify a signed nonce. Reads the challenge from Supabase (works across
+ * restarts and multiple processes), checks expiry, validates Ed25519 signature,
+ * then deletes the used challenge.
  */
-function verifySignature(req, res) {
+async function verifySignature(req, res) {
   const { wallet, signature } = req.body;
-  if (!wallet || !signature) return res.status(400).json({ error: 'wallet and signature required' });
+  if (!wallet || !signature)
+    return res.status(400).json({ error: 'wallet and signature required' });
 
-  const entry = challenges.get(wallet);
-  if (!entry || Date.now() > entry.expires)
+  const { data, error } = await supabase
+    .from('auth_challenges')
+    .select('nonce, expires_at')
+    .eq('wallet_address', wallet)
+    .gt('expires_at', new Date().toISOString())
+    .single();
+
+  if (error || !data)
     return res.status(401).json({ error: 'Challenge expired or not found' });
 
   try {
-    const keypair    = StellarSdk.Keypair.fromPublicKey(wallet);
-    const msgBuffer  = Buffer.from(entry.nonce);
-    const sigBuffer  = Buffer.from(signature, 'base64');
-    const valid      = keypair.verify(msgBuffer, sigBuffer);
+    const keypair   = StellarSdk.Keypair.fromPublicKey(wallet);
+    const msgBuffer = Buffer.from(data.nonce);
+    const sigBuffer = Buffer.from(signature, 'base64');
+    const valid     = keypair.verify(msgBuffer, sigBuffer);
 
     if (!valid) return res.status(401).json({ error: 'Invalid signature' });
 
-    challenges.delete(wallet);
+    // Consume the challenge so it cannot be replayed
+    await supabase.from('auth_challenges').delete().eq('wallet_address', wallet);
+
     res.json({ wallet, verified: true });
   } catch {
     res.status(401).json({ error: 'Signature verification failed' });
