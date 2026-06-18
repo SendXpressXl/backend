@@ -137,13 +137,13 @@ test('LRU eviction removes oldest entries when at capacity', () => {
   assert.ok(!rateLimitMap.has(firstKey));
 });
 
-test('prune removes entries older than cutoff', () => {
+test('prune removes entries older than their per-entry windowMs', () => {
   const middleware = rateLimit(100, 60000);
   
-  // Add an entry with old timestamp
-  rateLimitMap.set('old-ip', { count: 1, start: Date.now() - 70000 });
+  // Add an entry with old timestamp and 60s window
+  rateLimitMap.set('old-ip', { count: 1, start: Date.now() - 70000, windowMs: 60000 });
   
-  // Add a recent entry
+  // Add a recent entry with 60s window
   const req = { ip: 'new-ip', headers: {} };
   const res = { 
     setHeader: () => {}, 
@@ -155,9 +155,9 @@ test('prune removes entries older than cutoff', () => {
   assert.equal(rateLimitMap.size, 2);
 
   // Manually trigger prune logic (simulating the interval)
-  const cutoff = Date.now() - 60000;
+  const now = Date.now();
   for (const [key, entry] of rateLimitMap.entries()) {
-    if (entry.start < cutoff) rateLimitMap.delete(key);
+    if (now - entry.start > entry.windowMs) rateLimitMap.delete(key);
   }
 
   // Old entry should be removed
@@ -185,7 +185,7 @@ test('rate limiter uses wallet address header when present', () => {
   assert.ok(!rateLimitMap.has('192.168.1.1'));
 });
 
-test('rate limiter sets X-RateLimit headers', () => {
+test('rate limiter sets X-RateLimit headers on first request', () => {
   const middleware = rateLimit(10, 1000);
   const req = { ip: '192.168.1.1', headers: {} };
   const headers = {};
@@ -242,4 +242,37 @@ test('map handles high load of unique IPs without exceeding cap', () => {
 
   // Map size should never exceed MAX_ENTRIES
   assert.ok(rateLimitMap.size <= MAX_ENTRIES);
+});
+
+test('configurable windowMs is respected in prune', () => {
+  const middleware = rateLimit(100, 300_000); // 5-minute window
+  
+  // Add entry with 5-minute window that's 70 seconds old
+  rateLimitMap.set('old-5min', { count: 1, start: Date.now() - 70000, windowMs: 300_000 });
+  
+  // Add entry with 60-second window that's 70 seconds old
+  rateLimitMap.set('old-60s', { count: 1, start: Date.now() - 70000, windowMs: 60000 });
+  
+  // Add recent entry with 5-minute window
+  const req = { ip: 'new-ip', headers: {} };
+  const res = { 
+    setHeader: () => {}, 
+    status: () => ({ json: () => {} }) 
+  };
+  const next = () => {};
+  middleware(req, res, next);
+
+  assert.equal(rateLimitMap.size, 3);
+
+  // Manually trigger prune logic
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap.entries()) {
+    if (now - entry.start > entry.windowMs) rateLimitMap.delete(key);
+  }
+
+  // Only the 60s window entry should be pruned
+  assert.equal(rateLimitMap.size, 2);
+  assert.ok(!rateLimitMap.has('old-60s'));
+  assert.ok(rateLimitMap.has('old-5min'));
+  assert.ok(rateLimitMap.has('new-ip'));
 });
