@@ -1,25 +1,25 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
+const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { CreateUserSchema, RoleSchema } = require('../validation/schemas');
 const router = Router();
 
 // GET /api/users/:wallet
 router.get('/:wallet', async (req, res) => {
   const { wallet } = req.params;
-
   const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('wallet', wallet)
-    .single();
-
+    .from('users').select('*').eq('wallet', wallet).single();
   if (error) return res.status(404).json({ error: 'User not found' });
   res.json(data);
 });
 
-// POST /api/users — create or return existing user by wallet
-router.post('/', async (req, res) => {
-  const { wallet, handle, display_name, avatar_url } = req.body;
-  if (!wallet) return res.status(400).json({ error: 'wallet is required' });
+// POST /api/users — create or return existing user
+router.post('/', requireAuth, validate(CreateUserSchema), async (req, res) => {
+  const { handle, display_name, avatar_url } = req.body;
+
+  // Wallet comes from the authenticated session — any wallet in the body is ignored
+  const wallet = req.wallet;
 
   const { data: existing } = await supabase
     .from('users').select('*').eq('wallet', wallet).single();
@@ -35,13 +35,16 @@ router.post('/', async (req, res) => {
   res.status(201).json(data);
 });
 
-// PATCH /api/users/:id/role
-router.patch('/:id/role', async (req, res) => {
+// PATCH /api/users/:id/role — only the profile owner may change their own role
+router.patch('/:id/role', requireAuth, validate(RoleSchema), async (req, res) => {
   const { id } = req.params;
   const { role } = req.body;
 
-  if (!['buyer', 'seller', 'both'].includes(role))
-    return res.status(400).json({ error: 'role must be buyer, seller, or both' });
+  const { data: user } = await supabase
+    .from('users').select('wallet').eq('id', id).single();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.wallet !== req.wallet)
+    return res.status(403).json({ error: 'Cannot modify another user's role' });
 
   const { data, error } = await supabase
     .from('users')
