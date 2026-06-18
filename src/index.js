@@ -41,6 +41,7 @@ app.use('/api/health', healthRouter);
 
 app.get('/api/auth/challenge', issueChallenge);
 app.post('/api/auth/verify',   verifySignature);
+app.post('/api/auth/logout',   requireAuth, logout);
 
 app.use('/api/users',    usersRouter);
 app.use('/api/posts',    postsRouter);

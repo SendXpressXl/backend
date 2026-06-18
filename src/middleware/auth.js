@@ -62,18 +62,35 @@ async function verifySignature(req, res) {
 }
 
 /**
- * Middleware: require x-wallet-address header on protected routes.
+ * Middleware: require a valid Bearer session token on protected routes.
+ * Sets req.wallet to the verified wallet address.
  */
 function requireAuth(req, res, next) {
-  const wallet = req.headers['x-wallet-address'];
-  if (!wallet) return res.status(401).json({ error: 'Missing x-wallet-address header' });
-  try {
-    StellarSdk.Keypair.fromPublicKey(wallet);
-  } catch {
-    return res.status(401).json({ error: 'Invalid wallet address' });
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer '))
+    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+
+  const token   = authHeader.slice(7);
+  const session = sessions.get(token);
+
+  if (!session || Date.now() > session.expires) {
+    sessions.delete(token);
+    return res.status(401).json({ error: 'Session expired or invalid' });
   }
-  req.wallet = wallet;
+
+  req.wallet = session.wallet;
   next();
 }
 
-module.exports = { issueChallenge, verifySignature, requireAuth };
+/**
+ * POST /api/auth/logout — immediately revoke the caller's session token
+ */
+function logout(req, res) {
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    sessions.delete(authHeader.slice(7));
+  }
+  res.json({ success: true });
+}
+
+module.exports = { issueChallenge, verifySignature, requireAuth, logout };
