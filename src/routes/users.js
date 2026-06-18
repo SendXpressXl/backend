@@ -31,7 +31,7 @@ router.post('/', requireAuth, validate(CreateUserSchema), async (req, res) => {
     .select()
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return res.status(500).json({ error: 'Internal server error' });
   res.status(201).json(data);
 });
 
@@ -47,8 +47,13 @@ router.patch('/:id/role', requireAuth, validate(RoleSchema), async (req, res) =>
     return res.status(403).json({ error: 'Cannot modify another user's role' });
 
   const { data, error } = await supabase
-    .from('users').update({ role }).eq('id', id).select().single();
-  if (error) return res.status(500).json({ error: error.message });
+    .from('users')
+    .update({ role })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: 'Internal server error' });
   res.json(data);
 });
 

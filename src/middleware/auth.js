@@ -1,63 +1,66 @@
-const { StellarSdk } = require('../config/stellar');
-const crypto = require('crypto');
+const { randomBytes } = require('crypto');
+const { StellarSdk }  = require('../config/stellar');
+const supabase        = require('../config/supabase');
 
-const challenges = new Map();
-const sessions   = new Map();
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-
-// Evict expired sessions every minute to prevent unbounded memory growth
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, session] of sessions) {
-    if (now > session.expires) sessions.delete(token);
-  }
-}, 60_000);
-
-// Evict expired challenges to prevent unbounded growth under wallet-flood attacks
-setInterval(() => {
-  const now = Date.now();
-  for (const [wallet, entry] of challenges) {
-    if (now > entry.expires) challenges.delete(wallet);
-  }
-}, 60_000);
+const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * GET /api/auth/challenge?wallet=
+ * Persist a nonce for the wallet in the auth_challenges table.
+ * Uses upsert so a repeated challenge request replaces the old one.
  */
-function issueChallenge(req, res) {
+async function issueChallenge(req, res) {
   const { wallet } = req.query;
-  if (!wallet) return res.status(400).json({ error: 'wallet required' });
+  if (!wallet) return res.status(400).json({ error: 'wallet required', traceId: req.traceId ?? 'unknown' });
 
-  const nonce = `sendxpress:${Date.now()}:${crypto.randomBytes(16).toString('hex')}`;
-  challenges.set(wallet, { nonce, expires: Date.now() + 60_000 });
+  const nonce      = randomBytes(32).toString('hex');
+  const expiresAt  = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
+
+  const { error } = await supabase
+    .from('auth_challenges')
+    .upsert({ wallet_address: wallet, nonce, expires_at: expiresAt });
+
+  if (error) return res.status(500).json({ error: 'Internal server error', traceId: req.traceId ?? 'unknown' });
+
   res.json({ nonce });
 }
 
 /**
- * POST /api/auth/verify — verify signed nonce, return opaque session token
+ * Verify a signed nonce. Reads the challenge from Supabase (works across
+ * restarts and multiple processes), checks expiry, validates Ed25519 signature,
+ * then deletes the used challenge.
  */
-function verifySignature(req, res) {
+async function verifySignature(req, res) {
   const { wallet, signature } = req.body;
-  if (!wallet || !signature) return res.status(400).json({ error: 'wallet and signature required' });
+  if (!wallet || !signature)
+    return res.status(400).json({ error: 'wallet and signature required', traceId: req.traceId ?? 'unknown' });
 
-  const entry = challenges.get(wallet);
-  if (!entry || Date.now() > entry.expires)
-    return res.status(401).json({ error: 'Challenge expired or not found' });
+  const { data, error } = await supabase
+    .from('auth_challenges')
+    .select('nonce, expires_at')
+    .eq('wallet_address', wallet)
+    .gt('expires_at', new Date().toISOString())
+    .single();
+
+  if (error || !data)
+    return res.status(401).json({ error: 'Challenge expired or not found', traceId: req.traceId ?? 'unknown' });
 
   try {
     const keypair   = StellarSdk.Keypair.fromPublicKey(wallet);
-    const msgBuffer = Buffer.from(entry.nonce);
+    const msgBuffer = Buffer.from(data.nonce);
     const sigBuffer = Buffer.from(signature, 'base64');
     const valid     = keypair.verify(msgBuffer, sigBuffer);
 
-    if (!valid) return res.status(401).json({ error: 'Invalid signature' });
+    if (!valid) return res.status(401).json({ error: 'Invalid signature', traceId: req.traceId ?? 'unknown' });
 
-    challenges.delete(wallet);
-    const token = crypto.randomBytes(32).toString('hex');
-    sessions.set(token, { wallet, expires: Date.now() + SESSION_TTL_MS });
-    res.json({ wallet, token, verified: true });
+    // Consume the challenge so it cannot be replayed
+    await supabase.from('auth_challenges').delete().eq('wallet_address', wallet);
+
+    // NOTE: this endpoint returns { wallet, verified: true } — it is a
+    // challenge-response proof of key ownership only, not a session token.
+    // Session/token issuance is handled separately and outside this PR's scope.
+    res.json({ wallet, verified: true });
   } catch {
-    res.status(401).json({ error: 'Signature verification failed' });
+    res.status(401).json({ error: 'Signature verification failed', traceId: req.traceId ?? 'unknown' });
   }
 }
 
