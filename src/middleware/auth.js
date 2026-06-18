@@ -10,7 +10,7 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  */
 async function issueChallenge(req, res) {
   const { wallet } = req.query;
-  if (!wallet) return res.status(400).json({ error: 'wallet required' });
+  if (!wallet) return res.status(400).json({ error: 'wallet required', traceId: req.traceId ?? 'unknown' });
 
   const nonce      = randomBytes(32).toString('hex');
   const expiresAt  = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
@@ -19,7 +19,7 @@ async function issueChallenge(req, res) {
     .from('auth_challenges')
     .upsert({ wallet_address: wallet, nonce, expires_at: expiresAt });
 
-  if (error) return res.status(500).json({ error: 'Internal server error' });
+  if (error) return res.status(500).json({ error: 'Internal server error', traceId: req.traceId ?? 'unknown' });
 
   res.json({ nonce });
 }
@@ -32,7 +32,7 @@ async function issueChallenge(req, res) {
 async function verifySignature(req, res) {
   const { wallet, signature } = req.body;
   if (!wallet || !signature)
-    return res.status(400).json({ error: 'wallet and signature required' });
+    return res.status(400).json({ error: 'wallet and signature required', traceId: req.traceId ?? 'unknown' });
 
   const { data, error } = await supabase
     .from('auth_challenges')
@@ -42,7 +42,7 @@ async function verifySignature(req, res) {
     .single();
 
   if (error || !data)
-    return res.status(401).json({ error: 'Challenge expired or not found' });
+    return res.status(401).json({ error: 'Challenge expired or not found', traceId: req.traceId ?? 'unknown' });
 
   try {
     const keypair   = StellarSdk.Keypair.fromPublicKey(wallet);
@@ -50,14 +50,17 @@ async function verifySignature(req, res) {
     const sigBuffer = Buffer.from(signature, 'base64');
     const valid     = keypair.verify(msgBuffer, sigBuffer);
 
-    if (!valid) return res.status(401).json({ error: 'Invalid signature' });
+    if (!valid) return res.status(401).json({ error: 'Invalid signature', traceId: req.traceId ?? 'unknown' });
 
     // Consume the challenge so it cannot be replayed
     await supabase.from('auth_challenges').delete().eq('wallet_address', wallet);
 
+    // NOTE: this endpoint returns { wallet, verified: true } — it is a
+    // challenge-response proof of key ownership only, not a session token.
+    // Session/token issuance is handled separately and outside this PR's scope.
     res.json({ wallet, verified: true });
   } catch {
-    res.status(401).json({ error: 'Signature verification failed' });
+    res.status(401).json({ error: 'Signature verification failed', traceId: req.traceId ?? 'unknown' });
   }
 }
 
