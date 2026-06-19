@@ -46,23 +46,23 @@ async function buildAndSubmit(signerSecret, buildFn, { maxAttempts = 3 } = {}) {
  * Build an unsigned escrow-lock transaction for the buyer to sign client-side.
  * Returns base64 XDR. The buyer secret key never reaches the server.
  */
-async function lockFunds(buyerSecret, escrowPublic, amount, dealId) {
-  return buildAndSubmit(buyerSecret, (account) =>
-    new StellarSdk.TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase,
-    })
-      .addOperation(
-        StellarSdk.Operation.payment({
-          destination: escrowPublic,
-          asset:       StellarSdk.Asset.native(),
-          amount:      String(amount),
-        })
-      )
-      .addMemo(StellarSdk.Memo.text(`deal:${dealId}`))
-      .setTimeout(30)
-      .build()
-  );
+async function buildLockTx(buyerPublic, escrowPublic, amount, dealId) {
+  const account = await server.loadAccount(buyerPublic);
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      StellarSdk.Operation.payment({
+        destination: escrowPublic,
+        asset: StellarSdk.Asset.native(),
+        amount: String(amount),
+      })
+    )
+    .addMemo(StellarSdk.Memo.text(`deal:${dealId}`))
+    .setTimeout(30)
+    .build();
+  return tx.toXDR();
 }
 
 /**

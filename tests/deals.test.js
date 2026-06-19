@@ -10,7 +10,7 @@ const MISSING_UUID = '00000000-0000-4000-8000-000000000000';
 test('POST /api/deals returns 401 without Authorization header', async () => {
   const res = await fetch(`${BASE}/deals`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ signedXdr: 'x', seller: 'G' + 'A'.repeat(55), amount: 1, description: 'test' }),
+    body: JSON.stringify({ seller: 'G' + 'A'.repeat(55), amount: 1, description: 'test' }),
   });
   assert.equal(res.status, 401);
 });
@@ -25,8 +25,15 @@ test('GET /api/deals/:id returns 401 without Authorization header', async () => 
   assert.equal(res.status, 401);
 });
 
-test('GET /api/deals/build-lock-tx returns 401 without Authorization header', async () => {
-  const res = await fetch(`${BASE}/deals/build-lock-tx?seller=G${'A'.repeat(55)}&amount=1`);
+test('GET /api/deals/lock-tx returns 401 without Authorization header', async () => {
+  const res = await fetch(`${BASE}/deals/lock-tx?dealId=${MISSING_UUID}&amount=1`);
+  assert.equal(res.status, 401);
+});
+
+test('POST /api/deals/:id/submit-lock returns 401 without Authorization header', async () => {
+  const res = await fetch(`${BASE}/deals/${MISSING_UUID}/submit-lock`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
   assert.equal(res.status, 401);
 });
 
@@ -58,18 +65,14 @@ test('POST /api/deals/:id/cancel returns 401 without Authorization header', asyn
   assert.equal(res.status, 401);
 });
 
-test('POST /api/deals returns 400 for missing signedXdr when authenticated', async () => {
-  // Set TEST_SESSION_TOKEN from the challenge/verify flow to run with real auth.
-  // Without it this test skips. Proves signedXdr is required — a body with only
-  // buyerSecret (and no signedXdr) is rejected 400, not accepted.
+test('POST /api/deals/:id/submit-lock returns 400 for missing signedXdr when authenticated', async () => {
   const token = process.env.TEST_SESSION_TOKEN;
   if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
-  const res = await fetch(`${BASE}/deals`, {
+  const res = await fetch(`${BASE}/deals/${MISSING_UUID}/submit-lock`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
     body: JSON.stringify({
       buyerSecret: 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-      seller: 'G' + 'A'.repeat(55), amount: 10, description: 'test',
     }),
   });
   assert.equal(res.status, 400, `expected 400 (missing signedXdr), got ${res.status}`);

@@ -97,13 +97,14 @@ const CreateMessageSchema = z.object({
 
 // deals ---------------------------------------------------------------------
 
-// The buyer signs the XDR envelope client-side; the signed envelope is sent to
-// the server for submission. The buyer secret key never reaches the server.
 const CreateDealSchema = z.object({
-  signedXdr: z.string().min(1),
   seller: stellarPublicKey,
   amount: price,
   description: z.string().min(1).max(2000),
+});
+
+const SubmitLockSchema = z.object({
+  signedXdr: z.string().min(1),
 });
 
 // users ---------------------------------------------------------------------
@@ -132,6 +133,7 @@ module.exports = {
   MessagesQuerySchema,
   CreateMessageSchema,
   CreateDealSchema,
+  SubmitLockSchema,
   CreateUserSchema,
   RoleSchema,
 };
