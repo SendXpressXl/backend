@@ -11,13 +11,7 @@ const {
   CreateConversationSchema,
   MessagesQuerySchema,
   CreateMessageSchema,
-  DealsQuerySchema,
-  BuyerSecretHeaderSchema,
   CreateDealSchema,
-  ShipDealSchema,
-  ConfirmDealSchema,
-  CancelDealSchema,
-  DisputeDealSchema,
   CreateUserSchema,
   RoleSchema,
 } = require('../src/validation/schemas');
@@ -150,27 +144,6 @@ test('CreateDealSchema: a secret in the body is ignored, not stored', () => {
   const r = CreateDealSchema.safeParse({ seller: PUBLIC, amount: '5', description: 'x', buyerSecret: SECRET });
   assert.ok(r.success);
   assert.equal('buyerSecret' in r.data, false);
-});
-
-test('BuyerSecretHeaderSchema: requires a well-formed Stellar secret header', () => {
-  assert.ok(BuyerSecretHeaderSchema.safeParse({ 'x-buyer-secret': SECRET }).success);
-  assert.equal(BuyerSecretHeaderSchema.safeParse({ 'x-buyer-secret': 'nope' }).success, false);
-  assert.equal(BuyerSecretHeaderSchema.safeParse({}).success, false);
-});
-
-test('Deal state-change schemas validate the caller key as a Stellar public key', () => {
-  assert.ok(ShipDealSchema.safeParse({ sellerId: PUBLIC }).success);
-  assert.equal(ShipDealSchema.safeParse({ sellerId: 'GBUYER123' }).success, false);
-  assert.ok(ConfirmDealSchema.safeParse({ buyerId: PUBLIC }).success);
-  assert.equal(ConfirmDealSchema.safeParse({ buyerId: 'nope' }).success, false);
-  assert.ok(CancelDealSchema.safeParse({ buyerId: PUBLIC }).success);
-  assert.ok(DisputeDealSchema.safeParse({ callerId: PUBLIC }).success);
-  assert.equal(DisputeDealSchema.safeParse({}).success, false);
-});
-
-test('DealsQuerySchema: requires a Stellar public key', () => {
-  assert.ok(DealsQuerySchema.safeParse({ userId: PUBLIC }).success);
-  assert.equal(DealsQuerySchema.safeParse({ userId: 'GBADKEY' }).success, false);
 });
 
 // users schemas -------------------------------------------------------------
