@@ -4,35 +4,52 @@ const { buildLockTx, submitSignedTx, releaseFunds, refund } = require('../servic
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { StellarSdk, networkPassphrase } = require('../config/stellar');
-const { IdParamSchema, CreateDealSchema } = require('../validation/schemas');
+const { IdParamSchema, CreateDealSchema, SubmitLockSchema } = require('../validation/schemas');
 const router = Router();
 
 const ESCROW_SECRET = process.env.ESCROW_SECRET_KEY;
 const ESCROW_PUBLIC = process.env.ESCROW_PUBLIC_KEY;
 
-// GET /api/deals/build-lock-tx?seller=&amount=
+// GET /api/deals/lock-tx?amount=&dealId=
 // Returns an unsigned XDR the buyer can sign client-side.
-router.get('/build-lock-tx', requireAuth, async (req, res) => {
-  const { seller, amount } = req.query;
-  if (!seller || !amount) return res.status(400).json({ error: 'seller and amount are required' });
+router.get('/lock-tx', requireAuth, async (req, res) => {
+  const { amount, dealId } = req.query;
+  if (!amount || !dealId) return res.status(400).json({ error: 'amount and dealId are required' });
   if (Number(amount) <= 0) return res.status(400).json({ error: 'amount must be a positive number' });
+  
+  const { data: deal, error: fetchErr } = await supabase
+    .from('deals').select('*').eq('id', dealId).single();
+  if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.buyer !== req.wallet) return res.status(403).json({ error: 'Not the buyer' });
+  if (deal.status !== 'created') return res.status(400).json({ error: 'Invalid deal status' });
+
   try {
-    const xdr = await buildLockTx(req.wallet, ESCROW_PUBLIC, amount);
+    const xdr = await buildLockTx(req.wallet, ESCROW_PUBLIC, deal.amount, dealId);
     res.json({ xdr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/deals — buyer submits a signed XDR envelope; secret never reaches server
-router.post('/', requireAuth, validate(CreateDealSchema), async (req, res) => {
-  const { signedXdr, seller, amount, description } = req.body;
+// POST /api/deals/:id/submit-lock — buyer submits a signed XDR envelope
+router.post('/:id/submit-lock', requireAuth, validate(IdParamSchema, 'params'), validate(SubmitLockSchema), async (req, res) => {
+  const { id } = req.params;
+  const { signedXdr } = req.body;
+
   try {
+    // 1. Fetch deal to validate XDR against it
+    const { data: deal, error: fetchErr } = await supabase
+      .from('deals').select('*').eq('id', id).single();
+    if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
+    if (deal.buyer !== req.wallet) return res.status(403).json({ error: 'Not the buyer' });
+    if (deal.status !== 'created') return res.status(400).json({ error: 'Invalid deal status' });
+    if (deal.tx_hash) return res.status(409).json({ error: 'Funds already locked' });
+
     // Parse the signed XDR with the SDK v10+ API
     const tx          = new StellarSdk.Transaction(signedXdr, networkPassphrase);
     const buyerPublic = tx.source;
 
     // Verify the transaction was signed by the authenticated wallet
     if (buyerPublic !== req.wallet)
-      return res.status(403).json({ error: 'Transaction source does not match authenticated wallet' });
+      return res.status(400).json({ error: 'Transaction source does not match authenticated wallet' });
 
     // Validate that the XDR contains exactly the payment we expect
     const ops = tx.operations;
@@ -42,16 +59,53 @@ router.post('/', requireAuth, validate(CreateDealSchema), async (req, res) => {
       return res.status(400).json({ error: 'Payment destination must be the escrow account' });
     if (!ops[0].asset.isNative())
       return res.status(400).json({ error: 'Payment must be in native XLM' });
-    if (ops[0].amount !== String(amount))
+    if (ops[0].amount !== String(deal.amount))
       return res.status(400).json({ error: 'Payment amount does not match declared deal amount' });
 
-    // Submit the Stellar transaction BEFORE writing to the database.
-    // If submission fails, no orphaned deal record is created.
-    const txHash = await submitSignedTx(signedXdr);
+    // 2. Atomic update to prevent double-submit race condition
+    const { data: lockingDeal, error: lockErr } = await supabase
+      .from('deals')
+      .update({ status: 'locking' })
+      .eq('id', id)
+      .eq('status', 'created')
+      .is('tx_hash', null)
+      .select()
+      .single();
 
+    if (lockErr || !lockingDeal) {
+      return res.status(409).json({ error: 'Funds already locked or lock in progress' });
+    }
+
+    try {
+      // Submit the Stellar transaction
+      const txHash = await submitSignedTx(signedXdr);
+
+      const { data: updatedDeal, error } = await supabase
+        .from('deals')
+        .update({ tx_hash: txHash, status: 'locked' })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+
+      res.status(200).json(updatedDeal);
+    } catch (stellarErr) {
+      // Revert status so they can retry if it was a transient failure
+      await supabase.from('deals').update({ status: 'created' }).eq('id', id);
+      throw stellarErr;
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/deals — creates the deal in the database
+router.post('/', requireAuth, validate(CreateDealSchema), async (req, res) => {
+  const { seller, amount, description } = req.body;
+  try {
     const { data: deal, error } = await supabase
       .from('deals')
-      .insert({ buyer: buyerPublic, seller, amount, description, status: 'created', tx_hash: txHash })
+      .insert({ buyer: req.wallet, seller, amount, description, status: 'created' })
       .select()
       .single();
     if (error) throw error;
