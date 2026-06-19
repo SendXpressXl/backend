@@ -74,3 +74,43 @@ test('POST /api/chat/conversations returns 404 for nonexistent listing', async (
   });
   assert.equal(res.status, 404, `expected 404, got ${res.status}`);
 });
+
+async function createSellerListing(token) {
+  const res = await fetch(`${BASE}/listings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ title: 'Seller listing', price: 100 }),
+  });
+  if (res.status !== 201) return null;
+  return (await res.json()).id;
+}
+
+test('POST /api/chat/conversations returns 400 when seller omits buyer_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const listingId = await createSellerListing(token);
+  if (!listingId) { console.log('  skip: could not create listing'); return; }
+  const res = await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId }),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.error, 'buyer_id is required when creating as seller');
+});
+
+test('POST /api/chat/conversations creates conversation when seller provides buyer_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const listingId = await createSellerListing(token);
+  if (!listingId) { console.log('  skip: could not create listing'); return; }
+  const res = await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId, buyer_id: MISSING_UUID }),
+  });
+  assert.ok([200, 201].includes(res.status), `expected 200 or 201, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.listing_id, listingId);
+});

@@ -49,6 +49,9 @@ router.post('/conversations', requireAuth, validate(CreateConversationSchema), a
   if (!buyer_id)
     return res.status(400).json({ error: 'buyer_id is required when creating as seller' });
 
+  if (buyer_id === user.id)
+    return res.status(400).json({ error: 'Cannot create a conversation with yourself' });
+
   const { data: existing } = await supabase
     .from('conversations')
     .select('*')
