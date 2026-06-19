@@ -81,15 +81,18 @@ const ConversationsQuerySchema = z.object({ userId: uuid });
 
 const CreateConversationSchema = z.object({
   listing_id: uuid,
-  buyer_id: uuid,
-  seller_id: uuid,
+  // buyer_id and seller_id are optional — derived from the authenticated
+  // session and listing ownership server-side
+  buyer_id: uuid.optional(),
+  seller_id: uuid.optional(),
 });
 
 const MessagesQuerySchema = z.object({ conversationId: uuid });
 
 const CreateMessageSchema = z.object({
   conversation_id: uuid,
-  sender_id: uuid,
+  // sender_id is optional — derived from the authenticated session server-side
+  sender_id: uuid.optional(),
   type: z.enum(['text', 'offer', 'system']).optional(),
   body: z.string().min(1).max(5000),
   offer_amount: z.coerce.number().finite().nonnegative().optional(),

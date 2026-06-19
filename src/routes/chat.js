@@ -33,18 +33,28 @@ router.get('/conversations', requireAuth, async (req, res) => {
 
 // POST /api/chat/conversations
 router.post('/conversations', requireAuth, validate(CreateConversationSchema), async (req, res) => {
-  const { listing_id, buyer_id, seller_id } = req.body;
+  const { listing_id } = req.body;
 
   const user = await resolveUser(req.wallet, res);
   if (!user) return;
-  if (user.id !== buyer_id && user.id !== seller_id)
-    return res.status(403).json({ error: 'Must be buyer or seller to create conversation' });
+
+  const { data: listing } = await supabase
+    .from('listings').select('seller_id').eq('id', listing_id).single();
+  if (!listing) return res.status(404).json({ error: 'Listing not found' });
+
+  const isSeller = listing.seller_id === user.id;
+  const buyer_id  = isSeller ? (req.body.buyer_id || null) : user.id;
+  const seller_id = isSeller ? user.id : listing.seller_id;
+
+  if (!buyer_id)
+    return res.status(400).json({ error: 'buyer_id is required when creating as seller' });
 
   const { data: existing } = await supabase
     .from('conversations')
     .select('*')
     .eq('listing_id', listing_id)
     .eq('buyer_id', buyer_id)
+    .eq('seller_id', seller_id)
     .single();
   if (existing) return res.json(existing);
 
@@ -83,16 +93,14 @@ router.get('/messages', requireAuth, validate(MessagesQuerySchema, 'query'), asy
 
 // POST /api/chat/messages
 router.post('/messages', requireAuth, validate(CreateMessageSchema), async (req, res) => {
-  const { conversation_id, sender_id, type, body, offer_amount } = req.body;
+  const { conversation_id, type, body, offer_amount } = req.body;
 
   const user = await resolveUser(req.wallet, res);
   if (!user) return;
-  if (user.id !== sender_id)
-    return res.status(403).json({ error: 'sender_id does not match authenticated user' });
 
   const { data, error } = await supabase
     .from('messages')
-    .insert({ conversation_id, sender_id, type: type || 'text', body, offer_amount })
+    .insert({ conversation_id, sender_id: user.id, type: type || 'text', body, offer_amount })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
