@@ -54,21 +54,28 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // POST /api/posts/:id/like
+// Uses an atomic DB-level increment via RPC to avoid lost-update races.
+// Required Supabase migration:
+//   CREATE OR REPLACE FUNCTION increment_likes(post_id uuid)
+//   RETURNS void LANGUAGE sql AS $$
+//     UPDATE posts SET likes_count = likes_count + 1 WHERE id = post_id;
+//   $$;
 router.post('/:id/like', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
 
-  const { data: post, error: fetchErr } = await supabase
-    .from('posts').select('likes_count').eq('id', id).single();
+  // Verify the post exists before attempting the increment
+  const { error: fetchErr } = await supabase
+    .from('posts').select('id').eq('id', id).single();
   if (fetchErr) return res.status(404).json({ error: 'Post not found' });
 
-  const { data, error } = await supabase
-    .from('posts')
-    .update({ likes_count: (post.likes_count || 0) + 1 })
-    .eq('id', id)
-    .select()
-    .single();
-
+  const { error } = await supabase.rpc('increment_likes', { post_id: id });
   if (error) return res.status(500).json({ error: error.message });
+
+  // Return the updated count
+  const { data, error: fetchCountErr } = await supabase
+    .from('posts').select('likes_count').eq('id', id).single();
+  if (fetchCountErr) return res.status(500).json({ error: fetchCountErr.message });
+
   res.json({ likes_count: data.likes_count });
 });
 
