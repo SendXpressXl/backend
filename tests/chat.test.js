@@ -3,6 +3,8 @@ const { test } = require('node:test');
 
 const BASE = 'http://localhost:3000/api';
 
+const MISSING_UUID = '00000000-0000-4000-8000-000000000000';
+
 test('GET /api/chat/conversations returns 401 without Authorization header', async () => {
   const res = await fetch(`${BASE}/chat/conversations`);
   assert.equal(res.status, 401);
@@ -11,20 +13,104 @@ test('GET /api/chat/conversations returns 401 without Authorization header', asy
 test('POST /api/chat/conversations returns 401 without Authorization header', async () => {
   const res = await fetch(`${BASE}/chat/conversations`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ listing_id: '00000000-0000-4000-8000-000000000000', buyer_id: '00000000-0000-4000-8000-000000000001', seller_id: '00000000-0000-4000-8000-000000000002' }),
+    body: JSON.stringify({ listing_id: MISSING_UUID }),
   });
   assert.equal(res.status, 401);
 });
 
 test('GET /api/chat/messages returns 401 without Authorization header', async () => {
-  const res = await fetch(`${BASE}/chat/messages?conversationId=00000000-0000-4000-8000-000000000000`);
+  const res = await fetch(`${BASE}/chat/messages?conversationId=${MISSING_UUID}`);
   assert.equal(res.status, 401);
 });
 
 test('POST /api/chat/messages returns 401 without Authorization header', async () => {
   const res = await fetch(`${BASE}/chat/messages`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversation_id: '00000000-0000-4000-8000-000000000000', sender_id: '00000000-0000-4000-8000-000000000001', body: 'hello' }),
+    body: JSON.stringify({ conversation_id: MISSING_UUID, body: 'hello' }),
   });
   assert.equal(res.status, 401);
+});
+
+test('POST /api/chat/messages requires conversation_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const res = await fetch(`${BASE}/chat/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ body: 'hello' }),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+});
+
+test('POST /api/chat/messages rejects empty body', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const res = await fetch(`${BASE}/chat/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ conversation_id: MISSING_UUID, body: '' }),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+});
+
+test('POST /api/chat/conversations requires listing_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const res = await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+});
+
+test('POST /api/chat/conversations returns 404 for nonexistent listing', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const res = await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: MISSING_UUID }),
+  });
+  assert.equal(res.status, 404, `expected 404, got ${res.status}`);
+});
+
+async function createSellerListing(token) {
+  const res = await fetch(`${BASE}/listings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ title: 'Seller listing', price: 100 }),
+  });
+  if (res.status !== 201) return null;
+  return (await res.json()).id;
+}
+
+test('POST /api/chat/conversations returns 400 when seller omits buyer_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const listingId = await createSellerListing(token);
+  if (!listingId) { console.log('  skip: could not create listing'); return; }
+  const res = await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId }),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.error, 'buyer_id is required when creating as seller');
+});
+
+test('POST /api/chat/conversations creates conversation when seller provides buyer_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const listingId = await createSellerListing(token);
+  if (!listingId) { console.log('  skip: could not create listing'); return; }
+  const res = await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId, buyer_id: MISSING_UUID }),
+  });
+  assert.ok([200, 201].includes(res.status), `expected 200 or 201, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.listing_id, listingId);
 });
