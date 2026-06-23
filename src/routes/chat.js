@@ -101,6 +101,12 @@ router.post('/messages', requireAuth, validate(CreateMessageSchema), async (req,
   const user = await resolveUser(req.wallet, res);
   if (!user) return;
 
+  const { data: conv } = await supabase
+    .from('conversations').select('buyer_id, seller_id').eq('id', conversation_id).single();
+  if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+  if (conv.buyer_id !== user.id && conv.seller_id !== user.id)
+    return res.status(403).json({ error: 'Not a party to this conversation' });
+
   const { data, error } = await supabase
     .from('messages')
     .insert({ conversation_id, sender_id: user.id, type: type || 'text', body, offer_amount })
