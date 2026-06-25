@@ -6,7 +6,7 @@ const { logger }        = require('./lib/logger');
 const { requestLogger } = require('./middleware/requestLogger');
 const { errorHandler }  = require('./middleware/errorHandler');
 const { rateLimit }     = require('./middleware/rateLimit');
-const { issueChallenge, verifySignature, logout } = require('./middleware/auth');
+const { issueChallenge, verifySignature, requireAuth, logout } = require('./middleware/auth');
 
 const healthRouter   = require('./routes/health');
 const usersRouter    = require('./routes/users');

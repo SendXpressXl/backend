@@ -2,7 +2,10 @@ const { randomBytes } = require('crypto');
 const { StellarSdk }  = require('../config/stellar');
 const supabase        = require('../config/supabase');
 
-const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;        // 5 minutes
+const SESSION_TTL_MS   = 24 * 60 * 60 * 1000;  // 24 hours
+
+const sessions = new Map(); // token -> { wallet, expires }
 
 /**
  * Persist a nonce for the wallet in the auth_challenges table.
@@ -55,10 +58,12 @@ async function verifySignature(req, res) {
     // Consume the challenge so it cannot be replayed
     await supabase.from('auth_challenges').delete().eq('wallet_address', wallet);
 
-    // NOTE: this endpoint returns { wallet, verified: true } — it is a
-    // challenge-response proof of key ownership only, not a session token.
-    // Session/token issuance is handled separately and outside this PR's scope.
-    res.json({ wallet, verified: true });
+    // Issue a session token the client uses as a Bearer credential
+    const token   = randomBytes(32).toString('hex');
+    const expires = Date.now() + SESSION_TTL_MS;
+    sessions.set(token, { wallet, expires });
+
+    res.json({ token, wallet });
   } catch {
     res.status(401).json({ error: 'Signature verification failed', traceId: req.traceId ?? 'unknown' });
   }
