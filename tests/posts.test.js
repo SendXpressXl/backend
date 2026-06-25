@@ -40,11 +40,12 @@ test('POST /api/posts requires auth header', async () => {
   assert.equal(res.status, 401);
 });
 
-test('POST /api/posts/:id/like returns 404 for unknown post', async () => {
-  // A well-formed UUID that does not exist in the DB
+test('POST /api/posts/:id/like returns 404 for unknown post when authenticated', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
   const res = await fetch(`${BASE}/posts/00000000-0000-4000-8000-000000000000/like`, {
     method: 'POST',
-    headers: { 'x-wallet-address': 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN' },
+    headers: { 'Authorization': `Bearer ${token}` },
   });
   assert.equal(res.status, 404);
 });
