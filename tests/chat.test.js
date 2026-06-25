@@ -100,6 +100,19 @@ test('POST /api/chat/conversations returns 400 when seller omits buyer_id', asyn
   assert.equal(body.error, 'buyer_id is required when creating as seller');
 });
 
+test('POST /api/chat/messages returns 404 for non-existent conversation', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const res = await fetch(`${BASE}/chat/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ conversation_id: MISSING_UUID, body: 'hello' }),
+  });
+  assert.equal(res.status, 404, `expected 404, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.error, 'Conversation not found');
+});
+
 test('POST /api/chat/conversations creates conversation when seller provides buyer_id', async () => {
   const token = process.env.TEST_SESSION_TOKEN;
   if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
