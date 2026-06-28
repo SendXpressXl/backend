@@ -114,9 +114,11 @@ router.post('/messages', requireAuth, validate(CreateMessageSchema), async (req,
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
+  const lastMessagePreview = body.length > 200 ? body.substring(0, 200) : body;
+
   await supabase
     .from('conversations')
-    .update({ last_message: body, last_at: new Date().toISOString() })
+    .update({ last_message: lastMessagePreview, last_at: new Date().toISOString() })
     .eq('id', conversation_id);
 
   res.status(201).json(data);
