@@ -7,6 +7,16 @@ const SESSION_TTL_MS   = 24 * 60 * 60 * 1000;  // 24 hours
 
 const sessions = new Map(); // token -> { wallet, expires }
 
+// Prune expired sessions periodically to prevent unbounded memory growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions.entries()) {
+    if (now > session.expires) {
+      sessions.delete(token);
+    }
+  }
+}, 120_000);
+
 /**
  * Persist a nonce for the wallet in the auth_challenges table.
  * Uses upsert so a repeated challenge request replaces the old one.
