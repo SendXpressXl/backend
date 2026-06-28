@@ -94,7 +94,7 @@ const CreateMessageSchema = z.object({
   // sender_id is optional — derived from the authenticated session server-side
   sender_id: uuid.optional(),
   type: z.enum(['text', 'offer', 'system']).optional(),
-  body: z.string().min(1).max(5000),
+  body: z.string().min(1).max(2000),
   offer_amount: z.coerce.number().finite().nonnegative().optional(),
 });
 
