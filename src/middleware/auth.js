@@ -25,7 +25,7 @@ async function issueChallenge(req, res) {
   const { wallet } = req.query;
   if (!wallet) return res.status(400).json({ error: 'wallet required', traceId: req.traceId ?? 'unknown' });
 
-  const nonce      = randomBytes(32).toString('hex');
+  const nonce      = `sendxpress:${randomBytes(32).toString('hex')}`;
   const expiresAt  = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
 
   const { error } = await supabase
