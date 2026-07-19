@@ -87,7 +87,7 @@ const CreateConversationSchema = z.object({
   seller_id: uuid.optional(),
 });
 
-const MessagesQuerySchema = z.object({ conversationId: uuid });
+const MessagesQuerySchema = z.object({ conversationId: uuid, ...pagination });
 
 const CreateMessageSchema = z.object({
   conversation_id: uuid,

@@ -75,9 +75,13 @@ router.post('/conversations', requireAuth, validate(CreateConversationSchema), a
   res.status(200).json(data);
 });
 
-// GET /api/chat/messages?conversationId=
+// GET /api/chat/messages?conversationId=&cursor=&limit=
+// Cursor-paginated, newest first — same limit+1 / nextCursor shape as
+// GET /api/posts. Clients reverse the page to render oldest-to-newest and
+// pass nextCursor to load older messages as the user scrolls up.
 router.get('/messages', requireAuth, validate(MessagesQuerySchema, 'query'), async (req, res) => {
-  const { conversationId } = req.query;
+  const { conversationId, cursor, limit } = req.query;
+  const pageSize = limit;
 
   const user = await resolveUser(req.wallet, res);
   if (!user) return;
@@ -88,14 +92,23 @@ router.get('/messages', requireAuth, validate(MessagesQuerySchema, 'query'), asy
   if (conv.buyer_id !== user.id && conv.seller_id !== user.id)
     return res.status(403).json({ error: 'Access denied' });
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('messages')
     .select('*, users(handle, avatar_url)')
     .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: false })
+    .limit(pageSize + 1);
 
+  if (cursor) query = query.lt('created_at', cursor);
+
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  const hasMore   = data.length > pageSize;
+  const messages  = hasMore ? data.slice(0, pageSize) : data;
+  const nextCursor = hasMore ? messages[messages.length - 1].created_at : null;
+
+  res.json({ messages, nextCursor, hasMore });
 });
 
 // POST /api/chat/messages
