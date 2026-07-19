@@ -52,23 +52,27 @@ router.post('/conversations', requireAuth, validate(CreateConversationSchema), a
   if (buyer_id === user.id)
     return res.status(400).json({ error: 'Cannot create a conversation with yourself' });
 
-  const { data: existing } = await supabase
-    .from('conversations')
-    .select('*')
-    .eq('listing_id', listing_id)
-    .eq('buyer_id', buyer_id)
-    .eq('seller_id', seller_id)
-    .single();
-  if (existing) return res.json(existing);
-
+  // Upsert instead of select-then-insert — two requests racing to create the
+  // same (listing_id, buyer_id, seller_id) conversation used to both pass the
+  // select check and insert duplicate rows. The unique constraint below makes
+  // this atomic: the second writer hits ON CONFLICT DO UPDATE and gets the
+  // same row back instead of a duplicate.
+  //
+  // Required Supabase migration:
+  //   ALTER TABLE conversations
+  //     ADD CONSTRAINT conversations_listing_buyer_seller_key
+  //     UNIQUE (listing_id, buyer_id, seller_id);
   const { data, error } = await supabase
     .from('conversations')
-    .insert({ listing_id, buyer_id, seller_id })
+    .upsert(
+      { listing_id, buyer_id, seller_id },
+      { onConflict: 'listing_id,buyer_id,seller_id' },
+    )
     .select()
     .single();
 
   if (error) return res.status(500).json({ error: error.message });
-  res.status(201).json(data);
+  res.status(200).json(data);
 });
 
 // GET /api/chat/messages?conversationId=
