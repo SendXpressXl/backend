@@ -178,3 +178,69 @@ test('GET /api/chat/messages returns the paginated shape', async () => {
   assert.equal(typeof page.hasMore, 'boolean');
   if (page.hasMore) assert.ok(page.nextCursor, 'nextCursor should be set when hasMore is true');
 });
+
+async function createConversationWithMessage(token) {
+  const listingId = await createSellerListing(token);
+  if (!listingId) return null;
+
+  const conv = await (await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId, buyer_id: MISSING_UUID }),
+  })).json();
+
+  const message = await (await fetch(`${BASE}/chat/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ conversation_id: conv.id, body: 'hello' }),
+  })).json();
+
+  return { conv, message };
+}
+
+test('POST /api/chat/conversations/:id/read requires message_id', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const seed = await createConversationWithMessage(token);
+  if (!seed) { console.log('  skip: could not seed conversation'); return; }
+
+  const res = await fetch(`${BASE}/chat/conversations/${seed.conv.id}/read`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+});
+
+test('POST /api/chat/conversations/:id/read returns 404 for a message outside the conversation', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const seed = await createConversationWithMessage(token);
+  if (!seed) { console.log('  skip: could not seed conversation'); return; }
+
+  const res = await fetch(`${BASE}/chat/conversations/${seed.conv.id}/read`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ message_id: MISSING_UUID }),
+  });
+  assert.equal(res.status, 404, `expected 404, got ${res.status}`);
+});
+
+test('POST /api/chat/conversations/:id/read sets the caller\'s read pointer', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const seed = await createConversationWithMessage(token);
+  if (!seed) { console.log('  skip: could not seed conversation'); return; }
+
+  const res = await fetch(`${BASE}/chat/conversations/${seed.conv.id}/read`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ message_id: seed.message.id }),
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+  const body = await res.json();
+
+  // createSellerListing + create-as-seller means the caller is the seller
+  // side of this conversation.
+  assert.equal(body.seller_last_read_message_id, seed.message.id);
+});
