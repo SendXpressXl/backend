@@ -3,9 +3,11 @@ const supabase   = require('../config/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
+  IdParamSchema,
   CreateConversationSchema,
   MessagesQuerySchema,
   CreateMessageSchema,
+  MarkReadSchema,
 } = require('../validation/schemas');
 const router = Router();
 
@@ -140,5 +142,50 @@ router.post('/messages', requireAuth, validate(CreateMessageSchema), async (req,
 
   res.status(201).json(data);
 });
+
+// POST /api/chat/conversations/:id/read — mark messages read up to message_id
+// for whichever side of the conversation the caller is on.
+//
+// Required Supabase migration:
+//   ALTER TABLE conversations
+//     ADD COLUMN buyer_last_read_message_id  uuid REFERENCES messages(id),
+//     ADD COLUMN seller_last_read_message_id uuid REFERENCES messages(id);
+router.post(
+  '/conversations/:id/read',
+  requireAuth,
+  validate(IdParamSchema, 'params'),
+  validate(MarkReadSchema),
+  async (req, res) => {
+    const { id } = req.params;
+    const { message_id } = req.body;
+
+    const user = await resolveUser(req.wallet, res);
+    if (!user) return;
+
+    const { data: conv } = await supabase
+      .from('conversations').select('buyer_id, seller_id').eq('id', id).single();
+    if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+    if (conv.buyer_id !== user.id && conv.seller_id !== user.id)
+      return res.status(403).json({ error: 'Not a party to this conversation' });
+
+    const { data: message } = await supabase
+      .from('messages').select('id').eq('id', message_id).eq('conversation_id', id).single();
+    if (!message) return res.status(404).json({ error: 'Message not found in this conversation' });
+
+    const column = conv.buyer_id === user.id
+      ? 'buyer_last_read_message_id'
+      : 'seller_last_read_message_id';
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .update({ [column]: message_id })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  },
+);
 
 module.exports = router;

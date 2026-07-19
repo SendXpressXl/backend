@@ -89,6 +89,8 @@ const CreateConversationSchema = z.object({
 
 const MessagesQuerySchema = z.object({ conversationId: uuid, ...pagination });
 
+const MarkReadSchema = z.object({ message_id: uuid });
+
 const CreateMessageSchema = z.object({
   conversation_id: uuid,
   // sender_id is optional — derived from the authenticated session server-side
@@ -135,6 +137,7 @@ module.exports = {
   CreateConversationSchema,
   MessagesQuerySchema,
   CreateMessageSchema,
+  MarkReadSchema,
   CreateDealSchema,
   SubmitLockSchema,
   CreateUserSchema,
