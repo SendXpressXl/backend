@@ -69,9 +69,10 @@ The API handles user management, social feed, marketplace listings, real-time ch
 | Method | Route | Description |
 |---|---|---|
 | `GET` | `/api/chat/conversations` | Fetch conversations for a user |
-| `POST` | `/api/chat/conversations` | Create or find a conversation for a listing |
-| `GET` | `/api/chat/messages` | Fetch messages in a conversation |
+| `POST` | `/api/chat/conversations` | Create or find a conversation for a listing (atomic upsert, dedupes on listing_id + buyer_id + seller_id) |
+| `GET` | `/api/chat/messages` | Fetch messages in a conversation — cursor-paginated, newest first (`?conversationId=&cursor=&limit=`) |
 | `POST` | `/api/chat/messages` | Send a message + update conversation timestamp |
+| `POST` | `/api/chat/conversations/:id/read` | Mark messages read up to `message_id` for the calling side of the conversation |
 
 ### Escrow Deals
 
@@ -184,9 +185,21 @@ The API expects these Supabase tables (create via SQL editor):
 | `users` | id, wallet, handle, display_name, avatar_url, role, created_at |
 | `posts` | id, user_id, text, image_url, tagged_listing_id, likes_count, created_at |
 | `listings` | id, seller_id, title, description, price, category, moq, ship_days, image_url, status |
-| `conversations` | id, listing_id, buyer_id, seller_id, last_message, last_at |
+| `conversations` | id, listing_id, buyer_id, seller_id, last_message, last_at, buyer_last_read_message_id, seller_last_read_message_id |
 | `messages` | id, conversation_id, sender_id, type, body, offer_amount, offer_status, created_at |
 | `deals` | id, buyer, seller, amount, description, status, created_at |
+
+`conversations` also needs a unique constraint on `(listing_id, buyer_id, seller_id)` so the create-conversation upsert can dedupe correctly:
+
+```sql
+ALTER TABLE conversations
+  ADD CONSTRAINT conversations_listing_buyer_seller_key
+  UNIQUE (listing_id, buyer_id, seller_id);
+
+ALTER TABLE conversations
+  ADD COLUMN buyer_last_read_message_id  uuid REFERENCES messages(id),
+  ADD COLUMN seller_last_read_message_id uuid REFERENCES messages(id);
+```
 
 ---
 
