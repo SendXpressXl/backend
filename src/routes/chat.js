@@ -3,9 +3,11 @@ const supabase   = require('../config/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
+  IdParamSchema,
   CreateConversationSchema,
   MessagesQuerySchema,
   CreateMessageSchema,
+  MarkReadSchema,
 } = require('../validation/schemas');
 const router = Router();
 
@@ -52,28 +54,36 @@ router.post('/conversations', requireAuth, validate(CreateConversationSchema), a
   if (buyer_id === user.id)
     return res.status(400).json({ error: 'Cannot create a conversation with yourself' });
 
-  const { data: existing } = await supabase
-    .from('conversations')
-    .select('*')
-    .eq('listing_id', listing_id)
-    .eq('buyer_id', buyer_id)
-    .eq('seller_id', seller_id)
-    .single();
-  if (existing) return res.json(existing);
-
+  // Upsert instead of select-then-insert — two requests racing to create the
+  // same (listing_id, buyer_id, seller_id) conversation used to both pass the
+  // select check and insert duplicate rows. The unique constraint below makes
+  // this atomic: the second writer hits ON CONFLICT DO UPDATE and gets the
+  // same row back instead of a duplicate.
+  //
+  // Required Supabase migration:
+  //   ALTER TABLE conversations
+  //     ADD CONSTRAINT conversations_listing_buyer_seller_key
+  //     UNIQUE (listing_id, buyer_id, seller_id);
   const { data, error } = await supabase
     .from('conversations')
-    .insert({ listing_id, buyer_id, seller_id })
+    .upsert(
+      { listing_id, buyer_id, seller_id },
+      { onConflict: 'listing_id,buyer_id,seller_id' },
+    )
     .select()
     .single();
 
   if (error) return res.status(500).json({ error: error.message });
-  res.status(201).json(data);
+  res.status(200).json(data);
 });
 
-// GET /api/chat/messages?conversationId=
+// GET /api/chat/messages?conversationId=&cursor=&limit=
+// Cursor-paginated, newest first — same limit+1 / nextCursor shape as
+// GET /api/posts. Clients reverse the page to render oldest-to-newest and
+// pass nextCursor to load older messages as the user scrolls up.
 router.get('/messages', requireAuth, validate(MessagesQuerySchema, 'query'), async (req, res) => {
-  const { conversationId } = req.query;
+  const { conversationId, cursor, limit } = req.query;
+  const pageSize = limit;
 
   const user = await resolveUser(req.wallet, res);
   if (!user) return;
@@ -84,14 +94,23 @@ router.get('/messages', requireAuth, validate(MessagesQuerySchema, 'query'), asy
   if (conv.buyer_id !== user.id && conv.seller_id !== user.id)
     return res.status(403).json({ error: 'Access denied' });
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('messages')
     .select('*, users(handle, avatar_url)')
     .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: false })
+    .limit(pageSize + 1);
 
+  if (cursor) query = query.lt('created_at', cursor);
+
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  const hasMore   = data.length > pageSize;
+  const messages  = hasMore ? data.slice(0, pageSize) : data;
+  const nextCursor = hasMore ? messages[messages.length - 1].created_at : null;
+
+  res.json({ messages, nextCursor, hasMore });
 });
 
 // POST /api/chat/messages
@@ -123,5 +142,50 @@ router.post('/messages', requireAuth, validate(CreateMessageSchema), async (req,
 
   res.status(201).json(data);
 });
+
+// POST /api/chat/conversations/:id/read — mark messages read up to message_id
+// for whichever side of the conversation the caller is on.
+//
+// Required Supabase migration:
+//   ALTER TABLE conversations
+//     ADD COLUMN buyer_last_read_message_id  uuid REFERENCES messages(id),
+//     ADD COLUMN seller_last_read_message_id uuid REFERENCES messages(id);
+router.post(
+  '/conversations/:id/read',
+  requireAuth,
+  validate(IdParamSchema, 'params'),
+  validate(MarkReadSchema),
+  async (req, res) => {
+    const { id } = req.params;
+    const { message_id } = req.body;
+
+    const user = await resolveUser(req.wallet, res);
+    if (!user) return;
+
+    const { data: conv } = await supabase
+      .from('conversations').select('buyer_id, seller_id').eq('id', id).single();
+    if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+    if (conv.buyer_id !== user.id && conv.seller_id !== user.id)
+      return res.status(403).json({ error: 'Not a party to this conversation' });
+
+    const { data: message } = await supabase
+      .from('messages').select('id').eq('id', message_id).eq('conversation_id', id).single();
+    if (!message) return res.status(404).json({ error: 'Message not found in this conversation' });
+
+    const column = conv.buyer_id === user.id
+      ? 'buyer_last_read_message_id'
+      : 'seller_last_read_message_id';
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .update({ [column]: message_id })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  },
+);
 
 module.exports = router;
