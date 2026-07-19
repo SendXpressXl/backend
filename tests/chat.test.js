@@ -127,3 +127,54 @@ test('POST /api/chat/conversations creates conversation when seller provides buy
   const body = await res.json();
   assert.equal(body.listing_id, listingId);
 });
+
+test('POST /api/chat/conversations is idempotent for the same listing/buyer/seller triple', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const listingId = await createSellerListing(token);
+  if (!listingId) { console.log('  skip: could not create listing'); return; }
+
+  const create = () => fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId, buyer_id: MISSING_UUID }),
+  });
+
+  const first  = await (await create()).json();
+  const second = await (await create()).json();
+
+  // Same triple twice should resolve to the same row, not a duplicate —
+  // this is the race the unique constraint + upsert closes.
+  assert.equal(second.id, first.id);
+});
+
+test('GET /api/chat/messages returns the paginated shape', async () => {
+  const token = process.env.TEST_SESSION_TOKEN;
+  if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
+  const listingId = await createSellerListing(token);
+  if (!listingId) { console.log('  skip: could not create listing'); return; }
+
+  const conv = await (await fetch(`${BASE}/chat/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ listing_id: listingId, buyer_id: MISSING_UUID }),
+  })).json();
+
+  for (const body of ['first', 'second', 'third']) {
+    await fetch(`${BASE}/chat/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ conversation_id: conv.id, body }),
+    });
+  }
+
+  const res = await fetch(`${BASE}/chat/messages?conversationId=${conv.id}&limit=2`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  assert.equal(res.status, 200);
+  const page = await res.json();
+  assert.ok(Array.isArray(page.messages), 'messages should be an array');
+  assert.ok(page.messages.length <= 2, 'should respect the limit');
+  assert.equal(typeof page.hasMore, 'boolean');
+  if (page.hasMore) assert.ok(page.nextCursor, 'nextCursor should be set when hasMore is true');
+});
