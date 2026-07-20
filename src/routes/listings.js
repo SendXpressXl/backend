@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { IdParamSchema, ListingsQuerySchema, CreateListingSchema } = require('../validation/schemas');
 const router = Router();
@@ -26,18 +26,13 @@ router.get('/', validate(ListingsQuerySchema, 'query'), async (req, res) => {
 });
 
 // POST /api/listings
-router.post('/', requireAuth, validate(CreateListingSchema), async (req, res) => {
+router.post('/', requireAuth, validate(CreateListingSchema), requireRole('seller', 'both'), async (req, res) => {
   const { title, description, price, category, moq, ship_days, image_url } = req.body;
 
-  // Derive seller_id from the authenticated wallet — any seller_id in the body is ignored
-  const { data: seller } = await supabase
-    .from('users').select('id, role').eq('wallet', req.wallet).single();
-  if (!seller || !['seller', 'both'].includes(seller.role))
-    return res.status(403).json({ error: 'Seller role required' });
-
+  // seller_id comes from requireRole's lookup of the authenticated wallet — any seller_id in the body is ignored
   const { data, error } = await supabase
     .from('listings')
-    .insert({ seller_id: seller.id, title, description, price, category, moq, ship_days, image_url, status: 'active' })
+    .insert({ seller_id: req.user.id, title, description, price, category, moq, ship_days, image_url, status: 'active' })
     .select()
     .single();
 
