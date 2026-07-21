@@ -65,6 +65,11 @@ test('POST /api/deals/:id/cancel returns 401 without Authorization header', asyn
   assert.equal(res.status, 401);
 });
 
+test('GET /api/deals/:id/transitions returns 401 without Authorization header', async () => {
+  const res = await fetch(`${BASE}/deals/${MISSING_UUID}/transitions`);
+  assert.equal(res.status, 401);
+});
+
 test('POST /api/deals/:id/submit-lock returns 400 for missing signedXdr when authenticated', async () => {
   const token = process.env.TEST_SESSION_TOKEN;
   if (!token) { console.log('  skip: TEST_SESSION_TOKEN not set'); return; }
