@@ -111,4 +111,25 @@ function logout(req, res) {
   res.json({ success: true });
 }
 
-module.exports = { issueChallenge, verifySignature, requireAuth, logout };
+/**
+ * Middleware factory: requires the authenticated wallet's user profile to
+ * have one of the given roles. Must run after requireAuth, which sets
+ * req.wallet. Attaches the looked-up user row to req.user so handlers don't
+ * need a second lookup for the same profile.
+ */
+function requireRole(...roles) {
+  return async (req, res, next) => {
+    const { data: user, error } = await supabase
+      .from('users').select('id, role').eq('wallet', req.wallet).single();
+
+    if (error || !user)
+      return res.status(403).json({ error: 'User profile not found — create your profile first' });
+    if (!roles.includes(user.role))
+      return res.status(403).json({ error: `Requires role: ${roles.join(' or ')}` });
+
+    req.user = user;
+    next();
+  };
+}
+
+module.exports = { issueChallenge, verifySignature, requireAuth, requireRole, logout };
