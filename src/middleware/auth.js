@@ -101,6 +101,24 @@ function requireAuth(req, res, next) {
 }
 
 /**
+ * Middleware: attach req.wallet if a valid Bearer session token is present,
+ * but never rejects the request. For routes that behave differently for a
+ * signed-in caller (e.g. showing whether they've liked a post) without
+ * requiring auth outright.
+ */
+function optionalAuth(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token   = authHeader.slice(7);
+    const session = sessions.get(token);
+    if (session && Date.now() <= session.expires) {
+      req.wallet = session.wallet;
+    }
+  }
+  next();
+}
+
+/**
  * POST /api/auth/logout — immediately revoke the caller's session token
  */
 function logout(req, res) {
@@ -132,4 +150,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { issueChallenge, verifySignature, requireAuth, requireRole, logout };
+module.exports = { issueChallenge, verifySignature, requireAuth, optionalAuth, requireRole, logout };

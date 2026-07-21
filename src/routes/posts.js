@@ -1,13 +1,15 @@
 const { Router } = require('express');
 const { escape } = require('html-escaper');
 const supabase   = require('../config/supabase');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { IdParamSchema, PostsQuerySchema } = require('../validation/schemas');
 const router = Router();
 
 // GET /api/posts
-router.get('/', validate(PostsQuerySchema, 'query'), async (req, res) => {
+// optionalAuth so anonymous callers still get the feed, but a signed-in
+// caller also gets `liked` on each post, based on their own post_likes rows.
+router.get('/', optionalAuth, validate(PostsQuerySchema, 'query'), async (req, res) => {
   const { cursor, limit } = req.query;
   const pageSize = limit;
 
@@ -26,7 +28,25 @@ router.get('/', validate(PostsQuerySchema, 'query'), async (req, res) => {
   const posts   = hasMore ? data.slice(0, pageSize) : data;
   const nextCursor = hasMore ? posts[posts.length - 1].created_at : null;
 
-  res.json({ posts, nextCursor, hasMore });
+  let likedIds = new Set();
+  if (req.wallet && posts.length > 0) {
+    const { data: user } = await supabase
+      .from('users').select('id').eq('wallet', req.wallet).single();
+    if (user) {
+      const { data: likes } = await supabase
+        .from('post_likes')
+        .select('post_id')
+        .eq('user_id', user.id)
+        .in('post_id', posts.map((p) => p.id));
+      likedIds = new Set((likes ?? []).map((l) => l.post_id));
+    }
+  }
+
+  res.json({
+    posts: posts.map((p) => ({ ...p, liked: likedIds.has(p.id) })),
+    nextCursor,
+    hasMore,
+  });
 });
 
 // POST /api/posts
@@ -54,29 +74,29 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // POST /api/posts/:id/like
-// Uses an atomic DB-level increment via RPC to avoid lost-update races.
-// Required Supabase migration:
-//   CREATE OR REPLACE FUNCTION increment_likes(post_id uuid)
-//   RETURNS void LANGUAGE sql AS $$
-//     UPDATE posts SET likes_count = likes_count + 1 WHERE id = post_id;
-//   $$;
+// Toggles a like for the authenticated user on this post: creates a
+// post_likes row if one doesn't exist yet, removes it if it does. The
+// insert/delete and the likes_count update happen together in the
+// toggle_post_like() DB function, so there's no read-modify-write step for
+// concurrent requests to race against. See sql/post_likes.sql.
 router.post('/:id/like', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
   const { id } = req.params;
 
-  // Verify the post exists before attempting the increment
+  // Verify the post exists before attempting the toggle
   const { error: fetchErr } = await supabase
     .from('posts').select('id').eq('id', id).single();
   if (fetchErr) return res.status(404).json({ error: 'Post not found' });
 
-  const { error } = await supabase.rpc('increment_likes', { post_id: id });
+  const { data: user } = await supabase
+    .from('users').select('id').eq('wallet', req.wallet).single();
+  if (!user) return res.status(403).json({ error: 'User profile not found — create your profile first' });
+
+  const { data, error } = await supabase
+    .rpc('toggle_post_like', { p_post_id: id, p_user_id: user.id })
+    .single();
   if (error) return res.status(500).json({ error: error.message });
 
-  // Return the updated count
-  const { data, error: fetchCountErr } = await supabase
-    .from('posts').select('likes_count').eq('id', id).single();
-  if (fetchCountErr) return res.status(500).json({ error: fetchCountErr.message });
-
-  res.json({ likes_count: data.likes_count });
+  res.json({ liked: data.liked, likes_count: data.likes_count });
 });
 
 module.exports = router;
