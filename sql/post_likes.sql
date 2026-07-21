@@ -29,6 +29,7 @@ language plpgsql
 as $$
 declare
   v_deleted boolean;
+  v_inserted int;
 begin
   delete from post_likes
     where post_id = p_post_id and user_id = p_user_id
@@ -39,7 +40,14 @@ begin
   else
     insert into post_likes (post_id, user_id) values (p_post_id, p_user_id)
       on conflict (post_id, user_id) do nothing;
-    update posts set likes_count = likes_count + 1 where id = p_post_id;
+    get diagnostics v_inserted = row_count;
+
+    -- Only increment if this call's insert actually landed. Two concurrent
+    -- toggles that both miss the delete can both reach here; the primary
+    -- key lets only one insert through, so only that one should count.
+    if v_inserted > 0 then
+      update posts set likes_count = likes_count + 1 where id = p_post_id;
+    end if;
   end if;
 
   return query

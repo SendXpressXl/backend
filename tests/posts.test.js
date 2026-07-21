@@ -110,4 +110,15 @@ test('toggle_post_like migration defines a per-user post_likes table', async () 
   assert.ok(sql.includes('create table if not exists post_likes'), 'migration must create a post_likes table');
   assert.ok(sql.includes('primary key (post_id, user_id)'), 'post_likes must be keyed on (post_id, user_id) so a user can only like a post once');
   assert.ok(sql.includes('function toggle_post_like'), 'migration must define the toggle_post_like() function the route calls');
+
+  // The insert branch must check whether its own insert actually landed
+  // before incrementing likes_count. Two concurrent toggles that both miss
+  // the delete both reach the insert; the primary key lets only one insert
+  // through via ON CONFLICT DO NOTHING, so an unconditional increment here
+  // double-counts a single like. The delete branch already guards this the
+  // same way via v_deleted, the insert branch needs the same treatment.
+  assert.ok(
+    sql.includes('get diagnostics v_inserted = row_count') && sql.includes('if v_inserted > 0 then'),
+    'insert branch must check row_count before incrementing likes_count, same as the delete branch checks v_deleted'
+  );
 });
