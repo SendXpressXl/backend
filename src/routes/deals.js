@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
-const { buildLockTx, submitSignedTx, releaseFunds, refund } = require('../services/escrow');
+const { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, formatAmount } = require('../services/escrow');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { StellarSdk, networkPassphrase } = require('../config/stellar');
@@ -61,7 +61,7 @@ router.post('/:id/submit-lock', requireAuth, validate(IdParamSchema, 'params'), 
       return res.status(400).json({ error: 'Payment destination must be the escrow account' });
     if (!ops[0].asset.isNative())
       return res.status(400).json({ error: 'Payment must be in native XLM' });
-    if (ops[0].amount !== String(deal.amount))
+    if (ops[0].amount !== formatAmount(deal.amount))
       return res.status(400).json({ error: 'Payment amount does not match declared deal amount' });
 
     // 2. Atomic update to prevent double-submit race condition
@@ -81,11 +81,11 @@ router.post('/:id/submit-lock', requireAuth, validate(IdParamSchema, 'params'), 
 
     try {
       // Submit the Stellar transaction
-      const txHash = await submitSignedTx(signedXdr);
+      const { hash: txHash, ledger: txLedger } = await submitSignedTx(signedXdr);
 
       const { data: updatedDeal, error } = await supabase
         .from('deals')
-        .update({ tx_hash: txHash, status: 'locked' })
+        .update({ tx_hash: txHash, tx_ledger: txLedger, status: 'locked' })
         .eq('id', id)
         .select()
         .single();
@@ -210,8 +210,8 @@ router.post('/:id/confirm', requireAuth, validate(IdParamSchema, 'params'), asyn
   await logTransition(id, req.wallet, 'shipped', 'confirming');
 
   try {
-    const txHash = await releaseFunds(ESCROW_SECRET, locked.seller, locked.amount, id);
-    await supabase.from('deals').update({ release_tx: txHash }).eq('id', id);
+    const { hash: txHash, ledger: releaseLedger } = await releaseFunds(ESCROW_SECRET, locked.seller, locked.amount, id);
+    await supabase.from('deals').update({ release_tx: txHash, release_ledger: releaseLedger }).eq('id', id);
     await supabase.from('deals').update({ status: 'confirmed' }).eq('id', id);
     await logTransition(id, req.wallet, 'confirming', 'confirmed');
     res.json({ success: true, status: 'confirmed', tx_hash: txHash });
@@ -280,8 +280,8 @@ router.post('/:id/cancel', requireAuth, validate(IdParamSchema, 'params'), async
   await logTransition(id, req.wallet, 'created', 'cancelling');
 
   try {
-    const txHash = await refund(ESCROW_SECRET, locked.buyer, locked.amount, id);
-    await supabase.from('deals').update({ refund_tx: txHash }).eq('id', id);
+    const { hash: txHash, ledger: refundLedger } = await refund(ESCROW_SECRET, locked.buyer, locked.amount, id);
+    await supabase.from('deals').update({ refund_tx: txHash, refund_ledger: refundLedger }).eq('id', id);
     await supabase.from('deals').update({ status: 'cancelled' }).eq('id', id);
     await logTransition(id, req.wallet, 'cancelling', 'cancelled');
     res.json({ success: true, status: 'cancelled', tx_hash: txHash });
@@ -306,6 +306,29 @@ router.get('/:id/transitions', requireAuth, validate(IdParamSchema, 'params'), a
   if (error) return res.status(500).json({ error: error.message });
 
   res.json(data);
+});
+
+// GET /api/deals/:id/verify — check each recorded transaction against Horizon
+router.get('/:id/verify', requireAuth, validate(IdParamSchema, 'params'), async (req, res) => {
+  const { data: deal, error: fetchErr } = await supabase
+    .from('deals').select('*').eq('id', req.params.id).single();
+  if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.buyer !== req.wallet && deal.seller !== req.wallet)
+    return res.status(403).json({ error: 'Access denied' });
+
+  const [lock, release, refundCheck] = await Promise.all([
+    deal.tx_hash
+      ? verifyTransaction(deal.tx_hash, { destination: ESCROW_PUBLIC, amount: deal.amount, dealId: deal.id })
+      : null,
+    deal.release_tx
+      ? verifyTransaction(deal.release_tx, { destination: deal.seller, amount: deal.amount, dealId: deal.id })
+      : null,
+    deal.refund_tx
+      ? verifyTransaction(deal.refund_tx, { destination: deal.buyer, amount: deal.amount, dealId: deal.id })
+      : null,
+  ]);
+
+  res.json({ lock, release, refund: refundCheck });
 });
 
 module.exports = router;

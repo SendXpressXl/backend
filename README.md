@@ -85,6 +85,7 @@ The API handles user management, social feed, marketplace listings, real-time ch
 | `POST` | `/api/deals/:id/dispute` | Either party raises a dispute |
 | `POST` | `/api/deals/:id/cancel` | Buyer cancels before shipment — refund via Stellar tx |
 | `GET` | `/api/deals/:id/transitions` | Audit trail of status changes for a deal |
+| `GET` | `/api/deals/:id/verify` | Check each recorded transaction hash against Horizon |
 
 ---
 
@@ -188,10 +189,10 @@ The API expects these Supabase tables (create via SQL editor):
 | `listings` | id, seller_id, title, description, price, category, moq, ship_days, image_url, status |
 | `conversations` | id, listing_id, buyer_id, seller_id, last_message, last_at, buyer_last_read_message_id, seller_last_read_message_id |
 | `messages` | id, conversation_id, sender_id, type, body, offer_amount, offer_status, created_at |
-| `deals` | id, buyer, seller, amount, description, status, shipped_at, created_at |
+| `deals` | id, buyer, seller, amount, description, status, shipped_at, tx_ledger, release_ledger, refund_ledger, created_at |
 | `deal_transitions` | id, deal_id, actor_wallet, from_status, to_status, reason, created_at |
 
-`sql/deal_transitions_and_expiry.sql` has the exact statements for the `shipped_at` column and the `deal_transitions` table.
+`sql/deal_transitions_and_expiry.sql` has the exact statements for the `shipped_at` column and the `deal_transitions` table. `sql/escrow_confirmed_ledgers.sql` adds `tx_ledger`, `release_ledger`, and `refund_ledger`.
 
 `conversations` also needs a unique constraint on `(listing_id, buyer_id, seller_id)` so the create-conversation upsert can dedupe correctly:
 
