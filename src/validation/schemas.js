@@ -122,9 +122,25 @@ const CreateUserSchema = z.object({
   avatar_url: z.string().url().max(2048).optional(),
 });
 
+// 'admin' is a valid value here so an existing admin can grant it through
+// this same schema — the route handler is what stops a non-admin from
+// setting it on themselves or anyone else.
 const RoleSchema = z.object({
-  role: z.enum(['buyer', 'seller', 'both']),
+  role: z.enum(['buyer', 'seller', 'both', 'admin']),
 });
+
+const UpdateListingSchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    description: z.string().max(5000).optional(),
+    price: price.optional(),
+    category: category.optional(),
+    moq: z.coerce.number().int().positive().optional(),
+    ship_days: z.coerce.number().int().nonnegative().max(365).optional(),
+    image_url: z.string().url().max(2048).optional(),
+    status: z.enum(['active', 'inactive']).optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, { message: 'At least one field is required' });
 
 module.exports = {
   VALID_CATEGORIES,
@@ -133,6 +149,7 @@ module.exports = {
   CreatePostSchema,
   ListingsQuerySchema,
   CreateListingSchema,
+  UpdateListingSchema,
   ConversationsQuerySchema,
   CreateConversationSchema,
   MessagesQuerySchema,
