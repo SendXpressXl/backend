@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
-const { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction } = require('../services/escrow');
+const { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, formatAmount } = require('../services/escrow');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { StellarSdk, networkPassphrase } = require('../config/stellar');
@@ -61,7 +61,7 @@ router.post('/:id/submit-lock', requireAuth, validate(IdParamSchema, 'params'), 
       return res.status(400).json({ error: 'Payment destination must be the escrow account' });
     if (!ops[0].asset.isNative())
       return res.status(400).json({ error: 'Payment must be in native XLM' });
-    if (ops[0].amount !== String(deal.amount))
+    if (ops[0].amount !== formatAmount(deal.amount))
       return res.status(400).json({ error: 'Payment amount does not match declared deal amount' });
 
     // 2. Atomic update to prevent double-submit race condition

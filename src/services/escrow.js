@@ -23,6 +23,17 @@ function dealMemo(dealId) {
 }
 
 /**
+ * Stellar amounts round-trip through XDR as a fixed 7-decimal string —
+ * an operation built with amount: "100" reads back as "100.0000000".
+ * Anything comparing a stored/expected amount against one read off a
+ * transaction needs to format both sides the same way first, otherwise
+ * every legitimate transaction looks like a mismatch.
+ */
+function formatAmount(amount) {
+  return Number(amount).toFixed(7);
+}
+
+/**
  * Build and submit a Stellar transaction, retrying on transient errors
  * with exponential backoff. server.submitTransaction() already blocks until
  * the transaction is included in a ledger (or fails) — its response carries
@@ -167,11 +178,11 @@ async function verifyTransaction(hash, { destination, amount, dealId }) {
   if (payment.to !== destination) {
     return { verified: false, reason: 'destination does not match', ledger: record.ledger };
   }
-  if (payment.amount !== String(amount)) {
+  if (payment.amount !== formatAmount(amount)) {
     return { verified: false, reason: 'amount does not match', ledger: record.ledger };
   }
 
   return { verified: true, ledger: record.ledger };
 }
 
-module.exports = { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo };
+module.exports = { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount };

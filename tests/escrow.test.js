@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const crypto = require('node:crypto');
-const { dealMemo } = require('../src/services/escrow');
+const { dealMemo, formatAmount } = require('../src/services/escrow');
 
 const DEAL_ID = 'a1b2c3d4-e5f6-4789-a012-3456789abcde'; // 36 bytes — over the 28-byte MEMO_TEXT limit
 
@@ -27,4 +27,14 @@ test('dealMemo matches a plain sha256 digest of the deal id', () => {
 
 test('a UUID-based memo no longer throws (regression check for the old Memo.text bug)', () => {
   assert.doesNotThrow(() => dealMemo(DEAL_ID));
+});
+
+test('formatAmount matches how Stellar amounts round-trip through XDR', () => {
+  // Regression check: a payment built with amount "100" reads back off the
+  // chain as "100.0000000". Comparing against a bare String(amount) instead
+  // of this format flags every real transaction as a mismatch.
+  assert.equal(formatAmount(100), '100.0000000');
+  assert.equal(formatAmount('100'), '100.0000000');
+  assert.equal(formatAmount(100.5), '100.5000000');
+  assert.equal(formatAmount('99.1234567'), '99.1234567');
 });
