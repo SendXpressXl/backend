@@ -1,8 +1,9 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, attachUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { CreateUserSchema, RoleSchema } = require('../validation/schemas');
+const { IdParamSchema, CreateUserSchema, RoleSchema } = require('../validation/schemas');
+const { hasActiveSellerObligations } = require('../services/roleGuard');
 const router = Router();
 
 // GET /api/users/:wallet
@@ -35,26 +36,53 @@ router.post('/', requireAuth, validate(CreateUserSchema), async (req, res) => {
   res.status(201).json(data);
 });
 
-// PATCH /api/users/:id/role — only the profile owner may change their own role
-router.patch('/:id/role', requireAuth, validate(RoleSchema), async (req, res) => {
-  const { id } = req.params;
-  const { role } = req.body;
+// PATCH /api/users/:id/role — the profile owner may change their own role
+// (but not grant themselves admin), or an existing admin may change anyone's.
+router.patch(
+  '/:id/role',
+  requireAuth,
+  validate(IdParamSchema, 'params'),
+  validate(RoleSchema),
+  attachUser,
+  async (req, res) => {
+    const { id } = req.params;
+    const { role } = req.body;
+    const isAdmin = req.user.role === 'admin';
 
-  const { data: user } = await supabase
-    .from('users').select('wallet').eq('id', id).single();
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (user.wallet !== req.wallet)
-    return res.status(403).json({ error: "Cannot modify another user's role" });
+    const { data: target, error: targetErr } = await supabase
+      .from('users').select('id, wallet, role').eq('id', id).single();
+    if (targetErr || !target) return res.status(404).json({ error: 'User not found' });
 
-  const { data, error } = await supabase
-    .from('users')
-    .update({ role })
-    .eq('id', id)
-    .select()
-    .single();
+    const isSelf = target.wallet === req.wallet;
+    if (!isSelf && !isAdmin)
+      return res.status(403).json({ error: "Cannot modify another user's role" });
 
-  if (error) return res.status(500).json({ error: 'Internal server error' });
-  res.json(data);
-});
+    if (role === 'admin' && !isAdmin)
+      return res.status(403).json({ error: 'Only an existing admin can grant the admin role' });
+
+    // Dropping seller capability while a listing or deal still depends on
+    // this wallet as seller would orphan it — there's no cascade handling
+    // (closing listings, resolving deals) yet, so block it instead. An
+    // admin can still force this through, e.g. as part of banning someone.
+    if (!isAdmin && role === 'buyer' && ['seller', 'both'].includes(target.role)) {
+      const blocked = await hasActiveSellerObligations(target.id, target.wallet);
+      if (blocked) {
+        return res.status(409).json({
+          error: 'Cannot downgrade to buyer while you have an active listing or an in-progress deal as seller',
+        });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .update({ role })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: 'Internal server error' });
+    res.json(data);
+  },
+);
 
 module.exports = router;

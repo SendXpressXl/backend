@@ -1,8 +1,9 @@
 const { Router } = require('express');
 const supabase   = require('../config/supabase');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, attachUser } = require('../middleware/auth');
+const { requireOwnership } = require('../middleware/ownership');
 const { validate } = require('../middleware/validate');
-const { IdParamSchema, ListingsQuerySchema, CreateListingSchema } = require('../validation/schemas');
+const { IdParamSchema, ListingsQuerySchema, CreateListingSchema, UpdateListingSchema } = require('../validation/schemas');
 const router = Router();
 
 // GET /api/listings
@@ -50,5 +51,39 @@ router.get('/:id', validate(IdParamSchema, 'params'), async (req, res) => {
   if (error) return res.status(404).json({ error: 'Listing not found' });
   res.json(data);
 });
+
+// PATCH /api/listings/:id — only the listing's seller or an admin
+router.patch(
+  '/:id',
+  requireAuth,
+  validate(IdParamSchema, 'params'),
+  validate(UpdateListingSchema),
+  attachUser,
+  requireOwnership('listings', 'seller_id', 'listing'),
+  async (req, res) => {
+    const { data, error } = await supabase
+      .from('listings')
+      .update(req.body)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  },
+);
+
+// DELETE /api/listings/:id — only the listing's seller or an admin
+router.delete(
+  '/:id',
+  requireAuth,
+  validate(IdParamSchema, 'params'),
+  attachUser,
+  requireOwnership('listings', 'seller_id', 'listing'),
+  async (req, res) => {
+    const { error } = await supabase.from('listings').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true });
+  },
+);
 
 module.exports = router;
