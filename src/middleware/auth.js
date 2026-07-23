@@ -7,7 +7,9 @@ const SESSION_TTL_MS   = 24 * 60 * 60 * 1000;  // 24 hours
 
 const sessions = new Map(); // token -> { wallet, expires }
 
-// Prune expired sessions periodically to prevent unbounded memory growth
+// Prune expired sessions periodically to prevent unbounded memory growth.
+// unref() so this background timer never keeps the process (or a test
+// runner that imports this module) alive on its own.
 setInterval(() => {
   const now = Date.now();
   for (const [token, session] of sessions.entries()) {
@@ -15,7 +17,7 @@ setInterval(() => {
       sessions.delete(token);
     }
   }
-}, 120_000);
+}, 120_000).unref();
 
 /**
  * Persist a nonce for the wallet in the auth_challenges table.
