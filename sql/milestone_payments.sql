@@ -15,6 +15,7 @@ create table if not exists deal_milestones (
   sequence        integer not null,
   label           text not null,
   amount          numeric not null,
+  asset           text not null default 'native',
   status          text not null default 'pending'
                   check (status in (
                     'pending',     -- waiting for seller to complete this step

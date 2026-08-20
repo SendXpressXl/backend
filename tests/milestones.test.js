@@ -88,7 +88,7 @@ function makeFakeEscrow() {
   const control = { releaseThrows: false };
   return {
     module: {
-      releaseFunds: async (_secret, _seller, amount, _dealId) => {
+      releaseFunds: async (_secret, _seller, amount, _dealId, _asset) => {
         calls.release++;
         if (control.releaseThrows) throw new Error('simulated Stellar failure');
         return { hash: `tx-release-${calls.release}`, ledger: 1000 + calls.release };
@@ -98,6 +98,7 @@ function makeFakeEscrow() {
       submitSignedTx: async () => { throw new Error('not used in this test'); },
       verifyTransaction: async () => ({ verified: true }),
       formatAmount: (amt) => Number(amt).toFixed(7),
+      USDC_ASSET: { code: 'USDC', issuer: 'GA5ZSEJYB37JDD5G4LYXOKMWSUVC5HBH724QZDU5DHVJ76SCZGR5SOY3' },
     },
     calls,
     control,

@@ -1,16 +1,20 @@
 const { Router } = require('express');
 const supabase = require('../config/supabase');
-const { releaseFunds } = require('../services/escrow');
+const { releaseFunds, USDC_ASSET } = require('../services/escrow');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { IdParamSchema, MilestoneParamsSchema, CreateMilestoneDealSchema } = require('../validation/schemas');
 const { canMilestoneTransition } = require('../services/dealStateMachine');
-const { logTransition } = require('../services/dealTransitions');
+const { logTransition, expireStaleMilestones } = require('../services/dealTransitions');
 const router = Router();
 
 const ESCROW_SECRET = process.env.ESCROW_SECRET_KEY;
 
-// POST /api/milestones/deals — create a deal with milestones in one shot
+// POST /api/milestones/deals — create a deal with milestones in one shot.
+// The deal starts in "created" status. The buyer must lock the full amount
+// via the existing POST /api/deals/:id/submit-lock flow before any milestones
+// can be shipped. This keeps milestone deals compatible with the standard
+// escrow lifecycle.
 router.post('/deals', requireAuth, validate(CreateMilestoneDealSchema), async (req, res) => {
   const { seller, amount, description, milestones } = req.body;
 
@@ -36,6 +40,7 @@ router.post('/deals', requireAuth, validate(CreateMilestoneDealSchema), async (r
       sequence: i + 1,
       label: m.label,
       amount: m.amount,
+      asset: 'native',
       status: 'pending',
     }));
 
@@ -70,6 +75,9 @@ router.get('/deals/:id', requireAuth, validate(IdParamSchema, 'params'), async (
     .eq('deal_id', id)
     .order('sequence', { ascending: true });
   if (msErr) throw msErr;
+
+  // Best-effort: expire milestones shipped too long without confirmation
+  await expireStaleMilestones(id);
 
   res.json({ ...deal, milestones });
 });
@@ -181,6 +189,7 @@ router.post(
         deal.seller,
         milestone.amount,
         id,
+        USDC_ASSET,
       );
 
       await supabase
@@ -256,12 +265,22 @@ router.post(
 
     await logTransition(id, req.wallet, `milestone:${milestone.sequence}:${milestone.status}`, `milestone:${milestone.sequence}:disputed`);
 
-    // Also flag the parent deal as disputed
-    await supabase
-      .from('deals')
-      .update({ status: 'disputed' })
-      .eq('id', id)
-      .neq('status', 'confirmed');
+    // Only flag the parent deal as disputed if no other milestones have been
+    // confirmed — otherwise keep it locked so the remaining milestones can
+    // still be processed.
+    const { data: confirmedMilestones } = await supabase
+      .from('deal_milestones')
+      .select('id')
+      .eq('deal_id', id)
+      .eq('status', 'confirmed');
+
+    if (!confirmedMilestones || confirmedMilestones.length === 0) {
+      await supabase
+        .from('deals')
+        .update({ status: 'disputed' })
+        .eq('id', id)
+        .eq('status', 'locked');
+    }
 
     res.json({ success: true, milestoneId, status: 'disputed' });
   },
