@@ -16,6 +16,7 @@ const chatRouter     = require('./routes/chat');
 const dealsRouter    = require('./routes/deals');
 const fiatRouter     = require('./routes/fiatPayments');
 const depositsRouter = require('./routes/crossChainDeposits');
+const milestonesRouter = require('./routes/milestones');
 const { resumeStaleDeposits } = require('./services/crossChainDeposit');
 
 // ── Process-level guards ────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ app.use('/api/posts',    postsRouter);
 app.use('/api/listings', listingsRouter);
 app.use('/api/chat',     chatRouter);
 app.use('/api/deals',    dealsRouter);
+app.use('/api/milestones', milestonesRouter);
 app.use('/api/fiat',     fiatRouter);
 app.use('/api/deposits', depositsRouter);
 

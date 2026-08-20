@@ -2,6 +2,8 @@ const supabase = require('../config/supabase');
 const { logger } = require('../lib/logger');
 const { SHIPPED_EXPIRY_MS, FIAT_PENDING_EXPIRY_MS } = require('./dealStateMachine');
 
+const MILESTONE_SHIPPED_EXPIRY_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
 /**
  * Best-effort audit log write for a deal status change. Failures are logged,
  * never thrown — a logging outage must not block the transition it records.
@@ -75,4 +77,44 @@ async function expireIfStale(deal) {
   return updated;
 }
 
-module.exports = { logTransition, expireIfStale };
+  await logTransition(deal.id, 'system', 'shipped', 'expired', 'no buyer confirmation within the expiry window');
+  return updated;
+}
+
+/**
+ * Expire milestones that have been shipped past MILESTONE_SHIPPED_EXPIRY_MS
+ * without buyer confirmation. This is a best-effort sweep — a single milestone
+ * being expired does not automatically expire the whole deal.
+ *
+ * @param {string} dealId
+ * @returns {Promise<number>} number of milestones that were expired
+ */
+async function expireStaleMilestones(dealId) {
+  const cutoff = new Date(Date.now() - MILESTONE_SHIPPED_EXPIRY_MS).toISOString();
+
+  const { data: stale, error: fetchErr } = await supabase
+    .from('deal_milestones')
+    .select('*')
+    .eq('deal_id', dealId)
+    .eq('status', 'shipped')
+    .lt('updated_at', cutoff);
+
+  if (fetchErr || !stale || stale.length === 0) return 0;
+
+  let expired = 0;
+  for (const ms of stale) {
+    // Best-effort: flip shipped -> expired (a race with confirm is harmless)
+    const { error: updErr } = await supabase
+      .from('deal_milestones')
+      .update({ status: 'disputed', updated_at: new Date().toISOString() })
+      .eq('id', ms.id)
+      .eq('status', 'shipped');
+    if (!updErr) {
+      await logTransition(dealId, 'system', `milestone:${ms.sequence}:shipped`, `milestone:${ms.sequence}:disputed`, 'milestone shipped too long without confirmation');
+      expired++;
+    }
+  }
+  return expired;
+}
+
+module.exports = { logTransition, expireIfStale, expireStaleMilestones };
