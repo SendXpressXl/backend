@@ -1,10 +1,31 @@
 const supabase = require('../config/supabase');
 const { server, StellarSdk, networkPassphrase } = require('../config/stellar');
 const { pollForAttestation, getChainConfig, isValidTxHash } = require('./cctp');
+const { canTransition } = require('./dealStateMachine');
 const { logger } = require('../lib/logger');
 
 const ESCROW_SECRET = process.env.ESCROW_SECRET_KEY;
 const ESCROW_PUBLIC = process.env.ESCROW_PUBLIC_KEY;
+
+// Custom error classes for clean error handling in routes
+class UnsupportedChainError extends Error {
+  constructor(chain) { super(`Unsupported chain: ${chain}`); this.code = 'UNSUPPORTED_CHAIN'; }
+}
+class InvalidTxHashError extends Error {
+  constructor() { super('Invalid burn transaction hash'); this.code = 'INVALID_TX_HASH'; }
+}
+class DuplicateBurnHashError extends Error {
+  constructor(depositId) { super(`Burn hash already used in deposit ${depositId}`); this.code = 'DUPLICATE_BURN_HASH'; }
+}
+class DealNotFoundError extends Error {
+  constructor() { super('Deal not found'); this.code = 'DEAL_NOT_FOUND'; }
+}
+class NotBuyerError extends Error {
+  constructor() { super('Not the buyer'); this.code = 'NOT_BUYER'; }
+}
+class InvalidDealStatusError extends Error {
+  constructor(status) { super(`Deal is not in a lockable status, currently: ${status}`); this.code = 'INVALID_DEAL_STATUS'; }
+}
 
 /**
  * Process a cross-chain USDC deposit.
@@ -28,15 +49,23 @@ const ESCROW_PUBLIC = process.env.ESCROW_PUBLIC_KEY;
  */
 async function initiateCrossChainDeposit({ dealId, buyerWallet, burnTxHash, sourceChain, amount }) {
   const chain = getChainConfig(sourceChain);
-  if (!chain) throw new Error(`Unsupported chain: ${sourceChain}`);
-  if (!isValidTxHash(burnTxHash)) throw new Error('Invalid burn transaction hash');
+  if (!chain) throw new UnsupportedChainError(sourceChain);
+  if (!isValidTxHash(burnTxHash)) throw new InvalidTxHashError();
+
+  // Check if this burn hash was already used
+  const { data: existing } = await supabase
+    .from('cross_chain_deposits')
+    .select('id, status')
+    .eq('burn_tx_hash', burnTxHash)
+    .maybeSingle();
+  if (existing) throw new DuplicateBurnHashError(existing.id);
 
   // Verify the deal exists and belongs to this buyer
   const { data: deal, error: fetchErr } = await supabase
     .from('deals').select('*').eq('id', dealId).single();
-  if (fetchErr) throw new Error('Deal not found');
-  if (deal.buyer !== buyerWallet) throw new Error('Not the buyer');
-  if (deal.status !== 'created') throw new Error('Deal is not in created status');
+  if (fetchErr) throw new DealNotFoundError();
+  if (deal.buyer !== buyerWallet) throw new NotBuyerError();
+  if (!canTransition(deal.status, 'locking')) throw new InvalidDealStatusError(deal.status);
 
   // Create a pending deposit record
   const { data: deposit, error: insertErr } = await supabase
@@ -179,8 +208,8 @@ async function getDepositStatus(depositId, wallet) {
     .eq('id', depositId)
     .single();
 
-  if (error) throw new Error('Deposit not found');
-  if (data.buyer_wallet !== wallet) throw new Error('Access denied');
+  if (error) throw new DealNotFoundError();
+  if (data.buyer_wallet !== wallet) throw new NotBuyerError();
 
   return {
     id: data.id,
@@ -196,7 +225,50 @@ async function getDepositStatus(depositId, wallet) {
   };
 }
 
+/**
+ * Resume processing for deposits that were left in pending/attesting state
+ * (e.g. after a server restart). Called on startup.
+ */
+async function resumeStaleDeposits() {
+  const { data: stale } = await supabase
+    .from('cross_chain_deposits')
+    .select('*')
+    .in('status', ['pending', 'attesting']);
+
+  if (!stale || stale.length === 0) {
+    logger.info('No stale cross-chain deposits to resume');
+    return;
+  }
+
+  logger.info({ count: stale.length }, 'Resuming stale cross-chain deposits');
+
+  for (const deposit of stale) {
+    try {
+      const chain = getChainConfig(deposit.source_chain);
+      if (!chain) {
+        await supabase
+          .from('cross_chain_deposits')
+          .update({ status: 'failed', error_message: 'Unknown source chain' })
+          .eq('id', deposit.id);
+        continue;
+      }
+
+      processAttestation(
+        deposit.id,
+        deposit.burn_tx_hash,
+        chain.domain,
+        deposit.deal_id,
+        deposit.buyer_wallet,
+        deposit.amount
+      ).catch(err => logger.error({ depositId: deposit.id, err: err.message }, 'Resume failed'));
+    } catch (err) {
+      logger.error({ depositId: deposit.id, err: err.message }, 'Failed to resume deposit');
+    }
+  }
+}
+
 module.exports = {
   initiateCrossChainDeposit,
   getDepositStatus,
+  resumeStaleDeposits,
 };

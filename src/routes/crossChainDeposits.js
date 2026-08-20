@@ -31,11 +31,13 @@ router.post('/', requireAuth, validate(CreateCrossChainDepositSchema), async (re
       pollIntervalMs: 5000,
     });
   } catch (err) {
-    const status = err.message.includes('not found') ? 404
-      : err.message.includes('Not the buyer') ? 403
-      : err.message.includes('not in created') ? 409
-      : 400;
-    res.status(status).json({ error: err.message });
+    const statusMap = {
+      DEAL_NOT_FOUND: 404,
+      NOT_BUYER: 403,
+      INVALID_DEAL_STATUS: 409,
+      DUPLICATE_BURN_HASH: 409,
+    };
+    res.status(statusMap[err.code] || 400).json({ error: err.message, code: err.code });
   }
 });
 
@@ -45,8 +47,8 @@ router.get('/:id', requireAuth, validate(IdParamSchema, 'params'), async (req, r
     const status = await getDepositStatus(req.params.id, req.wallet);
     res.json(status);
   } catch (err) {
-    const status = err.message.includes('not found') ? 404 : 403;
-    res.status(status).json({ error: err.message });
+    const statusMap = { DEAL_NOT_FOUND: 404, NOT_BUYER: 403 };
+    res.status(statusMap[err.code] || 400).json({ error: err.message, code: err.code });
   }
 });
 

@@ -27,6 +27,10 @@ CREATE INDEX IF NOT EXISTS idx_cross_chain_deposits_deal_id
 CREATE INDEX IF NOT EXISTS idx_cross_chain_deposits_buyer_wallet
   ON cross_chain_deposits(buyer_wallet);
 
+-- Prevent double-submit: same burn hash can't be used twice
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cross_chain_deposits_burn_tx_hash
+  ON cross_chain_deposits(burn_tx_hash);
+
 -- Index for polling pending/attesting deposits
 CREATE INDEX IF NOT EXISTS idx_cross_chain_deposits_status
   ON cross_chain_deposits(status)

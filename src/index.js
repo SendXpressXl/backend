@@ -16,6 +16,7 @@ const chatRouter     = require('./routes/chat');
 const dealsRouter    = require('./routes/deals');
 const fiatRouter     = require('./routes/fiatPayments');
 const depositsRouter = require('./routes/crossChainDeposits');
+const { resumeStaleDeposits } = require('./services/crossChainDeposit');
 
 // ── Process-level guards ────────────────────────────────────────────────────
 
@@ -60,6 +61,11 @@ app.use(errorHandler);
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => logger.info({ port: PORT }, 'SendXpress API running'));
+app.listen(PORT, () => {
+  logger.info({ port: PORT }, 'SendXpress API running');
+  resumeStaleDeposits().catch(err =>
+    logger.error({ err: err.message }, 'Failed to resume stale deposits')
+  );
+});
 
 module.exports = app;
