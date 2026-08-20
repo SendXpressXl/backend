@@ -108,6 +108,24 @@ const CreateDealSchema = z.object({
   description: z.string().min(1).max(2000),
 });
 
+const milestoneItem = z.object({
+  label: z.string().min(1).max(200),
+  amount: price,
+});
+
+const CreateMilestoneDealSchema = z.object({
+  seller: stellarPublicKey,
+  amount: price,
+  description: z.string().min(1).max(2000),
+  milestones: z.array(milestoneItem).min(2).max(20),
+}).refine(
+  (d) => {
+    const total = d.milestones.reduce((sum, m) => sum + m.amount, 0);
+    return Math.abs(total - d.amount) < 0.0000001;
+  },
+  { message: 'Sum of milestone amounts must equal the deal amount', path: ['milestones'] },
+);
+
 const SubmitLockSchema = z.object({
   signedXdr: z.string().min(1),
 });
@@ -181,6 +199,7 @@ module.exports = {
   CreateMessageSchema,
   MarkReadSchema,
   CreateDealSchema,
+  CreateMilestoneDealSchema,
   SubmitLockSchema,
   InitiateFiatPaymentSchema,
   FiatWebhookSchema,
