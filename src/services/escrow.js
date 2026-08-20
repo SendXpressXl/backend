@@ -4,6 +4,10 @@ const { logger } = require('../lib/logger');
 
 const BASE_FEE = '100';
 
+// USDC on Stellar — testnet issuer used when USDC_ISSUER env is not set.
+const USDC_ISSUER = process.env.USDC_ISSUER || 'GA5ZSEJYB37JDD5G4LYXOKMWSUVC5HBH724QZDU5DHVJ76SCZGR5SOY3';
+const USDC_ASSET  = new StellarSdk.Asset('USDC', USDC_ISSUER);
+
 /**
  * Returns true for transient Stellar errors that are safe to retry.
  */
@@ -93,6 +97,29 @@ async function buildLockTx(buyerPublic, escrowPublic, amount, dealId) {
 }
 
 /**
+ * Build an unsigned escrow-lock transaction for a USDC payment.
+ * Same flow as buildLockTx but uses the USDC asset instead of native XLM.
+ */
+async function buildUsdcLockTx(buyerPublic, escrowPublic, amount, dealId) {
+  const account = await server.loadAccount(buyerPublic);
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      StellarSdk.Operation.payment({
+        destination: escrowPublic,
+        asset: USDC_ASSET,
+        amount: String(amount),
+      })
+    )
+    .addMemo(dealMemo(dealId))
+    .setTimeout(30)
+    .build();
+  return tx.toXDR();
+}
+
+/**
  * Submit a pre-signed XDR envelope received from the buyer.
  * Uses StellarSdk.Transaction constructor (SDK v10+ API).
  *
@@ -105,7 +132,8 @@ async function submitSignedTx(signedXdr) {
   return { hash: result.hash, ledger: result.ledger };
 }
 
-async function releaseFunds(escrowSecret, sellerPublic, amount, dealId) {
+async function releaseFunds(escrowSecret, sellerPublic, amount, dealId, asset) {
+  const paymentAsset = asset || StellarSdk.Asset.native();
   return buildAndSubmit(escrowSecret, (account) =>
     new StellarSdk.TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -114,7 +142,7 @@ async function releaseFunds(escrowSecret, sellerPublic, amount, dealId) {
       .addOperation(
         StellarSdk.Operation.payment({
           destination: sellerPublic,
-          asset:       StellarSdk.Asset.native(),
+          asset:       paymentAsset,
           amount:      String(amount),
         })
       )
@@ -123,7 +151,8 @@ async function releaseFunds(escrowSecret, sellerPublic, amount, dealId) {
   );
 }
 
-async function refund(escrowSecret, buyerPublic, amount, dealId) {
+async function refund(escrowSecret, buyerPublic, amount, dealId, asset) {
+  const paymentAsset = asset || StellarSdk.Asset.native();
   return buildAndSubmit(escrowSecret, (account) =>
     new StellarSdk.TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -132,7 +161,7 @@ async function refund(escrowSecret, buyerPublic, amount, dealId) {
       .addOperation(
         StellarSdk.Operation.payment({
           destination: buyerPublic,
-          asset:       StellarSdk.Asset.native(),
+          asset:       paymentAsset,
           amount:      String(amount),
         })
       )
@@ -185,4 +214,4 @@ async function verifyTransaction(hash, { destination, amount, dealId }) {
   return { verified: true, ledger: record.ledger };
 }
 
-module.exports = { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount };
+module.exports = { buildLockTx, buildUsdcLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount, USDC_ASSET, USDC_ISSUER };
