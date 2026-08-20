@@ -112,6 +112,20 @@ const SubmitLockSchema = z.object({
   signedXdr: z.string().min(1),
 });
 
+// fiat payments -------------------------------------------------------------
+
+const InitiateFiatPaymentSchema = z.object({
+  dealId: uuid,
+  currency: z.string().min(3).max(10).default('USD'),
+  amountFiat: price,
+});
+
+const FiatWebhookSchema = z.object({
+  eventID: z.string().optional(),
+  eventName: z.string().optional(),
+  data: z.record(z.unknown()).optional(),
+}).passthrough();
+
 // users ---------------------------------------------------------------------
 
 const CreateUserSchema = z.object({
@@ -157,6 +171,8 @@ module.exports = {
   MarkReadSchema,
   CreateDealSchema,
   SubmitLockSchema,
+  InitiateFiatPaymentSchema,
+  FiatWebhookSchema,
   CreateUserSchema,
   RoleSchema,
 };
