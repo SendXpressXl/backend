@@ -15,6 +15,7 @@ const listingsRouter = require('./routes/listings');
 const chatRouter     = require('./routes/chat');
 const dealsRouter    = require('./routes/deals');
 const fiatRouter     = require('./routes/fiatPayments');
+const depositsRouter = require('./routes/crossChainDeposits');
 
 // ── Process-level guards ────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ app.use('/api/listings', listingsRouter);
 app.use('/api/chat',     chatRouter);
 app.use('/api/deals',    dealsRouter);
 app.use('/api/fiat',     fiatRouter);
+app.use('/api/deposits', depositsRouter);
 
 // ── Global error handler (must be last) ─────────────────────────────────────
 
