@@ -126,6 +126,16 @@ const FiatWebhookSchema = z.object({
   data: z.record(z.unknown()).optional(),
 }).passthrough();
 
+// cross-chain deposits ------------------------------------------------------
+
+const SUPPORTED_CHAINS = ['ethereum', 'arbitrum', 'base', 'avalanche'];
+
+const CreateCrossChainDepositSchema = z.object({
+  dealId: uuid,
+  burnTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid EVM transaction hash'),
+  sourceChain: z.enum(SUPPORTED_CHAINS),
+  amount: price,
+});
 // users ---------------------------------------------------------------------
 
 const CreateUserSchema = z.object({
@@ -158,6 +168,7 @@ const UpdateListingSchema = z
 
 module.exports = {
   VALID_CATEGORIES,
+  SUPPORTED_CHAINS,
   IdParamSchema,
   PostsQuerySchema,
   CreatePostSchema,
@@ -173,6 +184,7 @@ module.exports = {
   SubmitLockSchema,
   InitiateFiatPaymentSchema,
   FiatWebhookSchema,
+  CreateCrossChainDepositSchema,
   CreateUserSchema,
   RoleSchema,
 };
