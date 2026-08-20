@@ -20,6 +20,11 @@
  * created    -> cancelling    (buyer cancels before shipment)
  * created    -> disputed
  * cancelling -> cancelled     (funds refunded)
+ *
+ * Cross-chain CCTP deposits follow the same created -> locking -> locked
+ * path, but the locking step is triggered server-side after attestation
+ * instead of by a client-signed XDR. The payment_method column on deals
+ * tracks whether the lock came from a direct XLM payment or a CCTP deposit.
  */
 const TRANSITIONS = {
   created:      ['locking', 'fiat_pending', 'cancelling', 'disputed'],
