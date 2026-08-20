@@ -5,29 +5,35 @@
  * `if (deal.status !== 'x')` check goes through canTransition() instead, so
  * the full lifecycle lives in one place and can't drift between handlers.
  *
- * created    -> locking    (buyer starts locking funds)
- * locking    -> locked     (Stellar submission succeeded)
- * locking    -> created    (Stellar submission failed, reverted)
- * locked     -> shipped    (seller ships)
- * shipped    -> confirming (buyer starts confirming)
+ * created    -> locking       (buyer starts locking funds via crypto)
+ * created    -> fiat_pending  (buyer starts fiat on-ramp)
+ * locking    -> locked        (Stellar submission succeeded)
+ * locking    -> created       (Stellar submission failed, reverted)
+ * fiat_pending -> fiat_locked (webhook confirms USDC received)
+ * fiat_pending -> created     (payment failed, can retry)
+ * locked     -> shipped       (seller ships)
+ * fiat_locked -> shipped      (seller ships — same as locked)
+ * shipped    -> confirming    (buyer starts confirming)
  * shipped    -> disputed
- * shipped    -> expired    (no confirmation within the expiry window)
- * confirming -> confirmed  (funds released)
- * created    -> cancelling (buyer cancels before shipment)
+ * shipped    -> expired       (no confirmation within the expiry window)
+ * confirming -> confirmed     (funds released)
+ * created    -> cancelling    (buyer cancels before shipment)
  * created    -> disputed
- * cancelling -> cancelled  (funds refunded)
+ * cancelling -> cancelled     (funds refunded)
  */
 const TRANSITIONS = {
-  created:    ['locking', 'cancelling', 'disputed'],
-  locking:    ['locked', 'created'],
-  locked:     ['shipped'],
-  shipped:    ['confirming', 'disputed', 'expired'],
-  confirming: ['confirmed'],
-  cancelling: ['cancelled'],
-  confirmed:  [],
-  cancelled:  [],
-  disputed:   [],
-  expired:    [],
+  created:      ['locking', 'fiat_pending', 'cancelling', 'disputed'],
+  locking:      ['locked', 'created'],
+  fiat_pending: ['fiat_locked', 'created'],
+  locked:       ['shipped'],
+  fiat_locked:  ['shipped'],
+  shipped:      ['confirming', 'disputed', 'expired'],
+  confirming:   ['confirmed'],
+  cancelling:   ['cancelled'],
+  confirmed:    [],
+  cancelled:    [],
+  disputed:     [],
+  expired:      [],
 };
 
 function canTransition(from, to) {
