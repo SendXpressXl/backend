@@ -25,6 +25,12 @@
  * path, but the locking step is triggered server-side after attestation
  * instead of by a client-signed XDR. The payment_method column on deals
  * tracks whether the lock came from a direct XLM payment or a CCTP deposit.
+ *
+ * Milestone deals use the same deal-level lifecycle up to "locked", then each
+ * milestone within the deal progresses independently through:
+ *   pending -> shipped -> confirming -> confirmed
+ *   pending -> disputed
+ * The deal itself stays "locked" until all milestones are confirmed.
  */
 const TRANSITIONS = {
   created:      ['locking', 'fiat_pending', 'cancelling', 'disputed'],
@@ -45,6 +51,22 @@ function canTransition(from, to) {
   return Array.isArray(TRANSITIONS[from]) && TRANSITIONS[from].includes(to);
 }
 
+/**
+ * Valid transitions for individual milestones within a milestone deal.
+ * Each milestone progresses through its own mini lifecycle.
+ */
+const MILESTONE_TRANSITIONS = {
+  pending:    ['shipped', 'disputed'],
+  shipped:    ['confirming', 'disputed'],
+  confirming: ['confirmed'],
+  confirmed:  [],
+  disputed:   [],
+};
+
+function canMilestoneTransition(from, to) {
+  return Array.isArray(MILESTONE_TRANSITIONS[from]) && MILESTONE_TRANSITIONS[from].includes(to);
+}
+
 // A deal sitting in "shipped" this long without buyer confirmation is
 // treated as stale and gets auto-flagged as "expired" so it surfaces for
 // review instead of sitting invisibly forever. Not wired to any automatic
@@ -55,4 +77,11 @@ const SHIPPED_EXPIRY_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 // payment is reverted to "created" so the buyer can retry or pay with crypto.
 const FIAT_PENDING_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
 
-module.exports = { TRANSITIONS, canTransition, SHIPPED_EXPIRY_MS, FIAT_PENDING_EXPIRY_MS };
+module.exports = {
+  TRANSITIONS,
+  canTransition,
+  SHIPPED_EXPIRY_MS,
+  FIAT_PENDING_EXPIRY_MS,
+  MILESTONE_TRANSITIONS,
+  canMilestoneTransition,
+};
