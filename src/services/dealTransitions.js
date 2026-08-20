@@ -1,6 +1,6 @@
 const supabase = require('../config/supabase');
 const { logger } = require('../lib/logger');
-const { SHIPPED_EXPIRY_MS } = require('./dealStateMachine');
+const { SHIPPED_EXPIRY_MS, FIAT_PENDING_EXPIRY_MS } = require('./dealStateMachine');
 
 /**
  * Best-effort audit log write for a deal status change. Failures are logged,
@@ -36,6 +36,26 @@ async function logTransition(dealId, actorWallet, fromStatus, toStatus, reason =
  * @returns {Promise<object>} the deal, updated if it just expired
  */
 async function expireIfStale(deal) {
+  // Fiat pending expiry — revert to created after timeout so buyer can retry
+  if (deal.status === 'fiat_pending' && deal.created_at) {
+    const createdAt = new Date(deal.created_at).getTime();
+    if (Date.now() - createdAt >= FIAT_PENDING_EXPIRY_MS) {
+      const { data: updated, error } = await supabase
+        .from('deals')
+        .update({ status: 'created', payment_method: 'crypto' })
+        .eq('id', deal.id)
+        .eq('status', 'fiat_pending')
+        .select()
+        .single();
+
+      if (!error && updated) {
+        await logTransition(deal.id, 'system', 'fiat_pending', 'created', 'fiat payment timed out');
+        return updated;
+      }
+    }
+    return deal;
+  }
+
   if (deal.status !== 'shipped' || !deal.shipped_at) return deal;
 
   const shippedAt = new Date(deal.shipped_at).getTime();

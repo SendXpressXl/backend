@@ -66,8 +66,8 @@ async function createTransakSession({ dealId, amountUsdc, wallet, currency = 'US
 function verifyTransakWebhook(body, signature) {
   const secret = process.env.TRANSAK_WEBHOOK_SECRET;
   if (!secret) {
-    logger.warn('Transak webhook secret not configured — skipping signature verification');
-    return true;
+    logger.error('TRANSAK_WEBHOOK_SECRET not configured — rejecting webhook');
+    return false;
   }
 
   const expected = crypto

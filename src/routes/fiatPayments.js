@@ -5,6 +5,7 @@ const { validate } = require('../middleware/validate');
 const { IdParamSchema, InitiateFiatPaymentSchema, FiatWebhookSchema } = require('../validation/schemas');
 const { createTransakSession, verifyTransakWebhook } = require('../services/onRamp');
 const { canTransition } = require('../services/dealStateMachine');
+const { getUsdcBalance } = require('../services/escrow');
 const { logTransition } = require('../services/dealTransitions');
 const { logger } = require('../lib/logger');
 const router = Router();
@@ -126,6 +127,34 @@ router.post('/webhook/transak', async (req, res) => {
     }
 
     if (eventName === 'TRANSAK_ORDER_SUCCESSFUL') {
+      // Idempotency: skip if this payment was already processed
+      if (payment.status === 'completed') {
+        logger.info({ dealId, paymentId: payment.id }, 'Fiat payment already completed, skipping');
+        return res.status(200).json({ received: true });
+      }
+
+      // Verify USDC actually arrived in the escrow account before locking
+      const { data: deal } = await supabase
+        .from('deals').select('*').eq('id', dealId).single();
+
+      if (!deal) {
+        logger.warn({ dealId }, 'Deal not found during webhook processing');
+        return res.status(200).json({ received: true });
+      }
+
+      const escrowPublic = process.env.ESCROW_PUBLIC_KEY;
+      const expectedAmount = Number(payment.amount_usdc);
+      const usdcBalance = await getUsdcBalance(escrowPublic);
+
+      if (usdcBalance < expectedAmount) {
+        logger.error(
+          { dealId, expectedAmount, usdcBalance },
+          'USDC balance verification failed — not enough USDC in escrow'
+        );
+        // Don't transition the deal — leave it in fiat_pending for manual review
+        return res.status(200).json({ received: true });
+      }
+
       // Update payment record
       await supabase
         .from('fiat_payments')
@@ -138,10 +167,7 @@ router.post('/webhook/transak', async (req, res) => {
         .eq('id', payment.id);
 
       // Transition deal to fiat_locked
-      const { data: deal } = await supabase
-        .from('deals').select('*').eq('id', dealId).single();
-
-      if (deal && canTransition(deal.status, 'fiat_locked')) {
+      if (canTransition(deal.status, 'fiat_locked')) {
         await supabase
           .from('deals')
           .update({ status: 'fiat_locked' })
@@ -152,6 +178,12 @@ router.post('/webhook/transak', async (req, res) => {
 
       logger.info({ dealId, paymentId: payment.id }, 'Fiat payment completed, deal locked');
     } else {
+      // Idempotency: skip if this payment was already processed
+      if (payment.status === 'failed' || payment.status === 'completed') {
+        logger.info({ dealId, paymentId: payment.id }, 'Fiat payment already processed, skipping failure');
+        return res.status(200).json({ received: true });
+      }
+
       // Payment failed
       await supabase
         .from('fiat_payments')

@@ -46,4 +46,8 @@ function canTransition(from, to) {
 // refund — that needs the admin/dispute resolution flow from #39.
 const SHIPPED_EXPIRY_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
-module.exports = { TRANSITIONS, canTransition, SHIPPED_EXPIRY_MS };
+// A deal sitting in "fiat_pending" this long without the webhook confirming
+// payment is reverted to "created" so the buyer can retry or pay with crypto.
+const FIAT_PENDING_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
+
+module.exports = { TRANSITIONS, canTransition, SHIPPED_EXPIRY_MS, FIAT_PENDING_EXPIRY_MS };

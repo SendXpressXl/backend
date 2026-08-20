@@ -214,4 +214,25 @@ async function verifyTransaction(hash, { destination, amount, dealId }) {
   return { verified: true, ledger: record.ledger };
 }
 
-module.exports = { buildLockTx, buildUsdcLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount, USDC_ASSET, USDC_ISSUER };
+/**
+ * Check the USDC balance of an account on Stellar. Used to verify that
+ * fiat on-ramp payments actually delivered USDC before locking a deal.
+ *
+ * @param {string} accountPublic - Stellar public key to check
+ * @returns {Promise<number>} USDC balance (0 if none found)
+ */
+async function getUsdcBalance(accountPublic) {
+  try {
+    const account = await server.loadAccount(accountPublic);
+    const balance = account.balances.find(
+      (b) => b.asset_type === 'credit_alphanum4' &&
+             b.asset_code === 'USDC' &&
+             b.asset_issuer === USDC_ISSUER
+    );
+    return balance ? Number(balance.balance) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+module.exports = { buildLockTx, buildUsdcLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount, USDC_ASSET, USDC_ISSUER, getUsdcBalance };
