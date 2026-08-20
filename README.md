@@ -87,6 +87,14 @@ The API handles user management, social feed, marketplace listings, real-time ch
 | `GET` | `/api/deals/:id/transitions` | Audit trail of status changes for a deal |
 | `GET` | `/api/deals/:id/verify` | Check each recorded transaction hash against Horizon |
 
+### Fiat On-Ramp
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/fiat/initiate` | Start a fiat on-ramp session for a deal (returns Transak URL) |
+| `GET` | `/api/fiat/:id` | Check fiat payment status |
+| `POST` | `/api/fiat/webhook/transak` | Provider callback — auto-locks deal on payment success |
+
 ---
 
 ## Project Structure
@@ -191,6 +199,7 @@ The API expects these Supabase tables (create via SQL editor):
 | `messages` | id, conversation_id, sender_id, type, body, offer_amount, offer_status, created_at |
 | `deals` | id, buyer, seller, amount, description, status, shipped_at, tx_ledger, release_ledger, refund_ledger, created_at |
 | `deal_transitions` | id, deal_id, actor_wallet, from_status, to_status, reason, created_at |
+| `fiat_payments` | id, deal_id, provider, provider_session_id, provider_tx_id, amount_fiat, currency, amount_usdc, status, wallet, metadata, created_at |
 
 `sql/deal_transitions_and_expiry.sql` has the exact statements for the `shipped_at` column and the `deal_transitions` table. `sql/escrow_confirmed_ledgers.sql` adds `tx_ledger`, `release_ledger`, and `refund_ledger`.
 
@@ -205,6 +214,21 @@ ALTER TABLE conversations
   ADD COLUMN buyer_last_read_message_id  uuid REFERENCES messages(id),
   ADD COLUMN seller_last_read_message_id uuid REFERENCES messages(id);
 ```
+
+---
+
+## Fiat On-Ramp Flow
+
+Buyers without a crypto wallet can fund deals using local currency (bank transfer, card, mobile money) through Transak:
+
+1. Buyer creates a deal (`POST /api/deals`) as usual
+2. Instead of locking XLM, buyer calls `POST /api/fiat/initiate` with the deal ID and fiat amount
+3. Server returns a Transak hosted URL — buyer completes payment there
+4. Transak converts fiat to USDC on Stellar and sends a webhook to `POST /api/fiat/webhook/transak`
+5. Server verifies the webhook, confirms USDC delivery, and transitions the deal to `fiat_locked`
+6. From `fiat_locked`, the standard fulfillment flow continues (ship, confirm, release)
+
+Deal states for fiat: `created` -> `fiat_pending` -> `fiat_locked` -> `shipped` -> `confirming` -> `confirmed`
 
 ---
 
