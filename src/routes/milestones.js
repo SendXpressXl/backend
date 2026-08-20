@@ -3,7 +3,7 @@ const supabase = require('../config/supabase');
 const { releaseFunds } = require('../services/escrow');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { IdParamSchema, CreateMilestoneDealSchema } = require('../validation/schemas');
+const { IdParamSchema, MilestoneParamsSchema, CreateMilestoneDealSchema } = require('../validation/schemas');
 const { canMilestoneTransition } = require('../services/dealStateMachine');
 const { logTransition } = require('../services/dealTransitions');
 const router = Router();
@@ -79,7 +79,7 @@ router.get('/deals/:id', requireAuth, validate(IdParamSchema, 'params'), async (
 router.post(
   '/deals/:id/milestones/:milestoneId/ship',
   requireAuth,
-  validate(IdParamSchema, 'params'),
+  validate(MilestoneParamsSchema, 'params'),
   async (req, res) => {
     const { id, milestoneId } = req.params;
 
@@ -121,7 +121,7 @@ router.post(
 router.post(
   '/deals/:id/milestones/:milestoneId/confirm',
   requireAuth,
-  validate(IdParamSchema, 'params'),
+  validate(MilestoneParamsSchema, 'params'),
   async (req, res) => {
     const { id, milestoneId } = req.params;
 
@@ -222,7 +222,7 @@ router.post(
 router.post(
   '/deals/:id/milestones/:milestoneId/dispute',
   requireAuth,
-  validate(IdParamSchema, 'params'),
+  validate(MilestoneParamsSchema, 'params'),
   async (req, res) => {
     const { id, milestoneId } = req.params;
 

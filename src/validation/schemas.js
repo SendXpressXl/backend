@@ -108,6 +108,11 @@ const CreateDealSchema = z.object({
   description: z.string().min(1).max(2000),
 });
 
+const MilestoneParamsSchema = z.object({
+  id: uuid,
+  milestoneId: uuid,
+});
+
 const milestoneItem = z.object({
   label: z.string().min(1).max(200),
   amount: price,
@@ -200,6 +205,7 @@ module.exports = {
   MarkReadSchema,
   CreateDealSchema,
   CreateMilestoneDealSchema,
+  MilestoneParamsSchema,
   SubmitLockSchema,
   InitiateFiatPaymentSchema,
   FiatWebhookSchema,

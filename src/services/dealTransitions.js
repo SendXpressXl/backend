@@ -77,10 +77,6 @@ async function expireIfStale(deal) {
   return updated;
 }
 
-  await logTransition(deal.id, 'system', 'shipped', 'expired', 'no buyer confirmation within the expiry window');
-  return updated;
-}
-
 /**
  * Expire milestones that have been shipped past MILESTONE_SHIPPED_EXPIRY_MS
  * without buyer confirmation. This is a best-effort sweep — a single milestone

@@ -140,7 +140,7 @@ function buildApp(store, fakeEscrow) {
 
 function makeDeal(store, overrides) {
   const deal = {
-    id: 'deal-00000000-0000-4000-8000-000000000001',
+    id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
     buyer: 'G' + 'A'.repeat(55),
     seller: 'G' + 'B'.repeat(55),
     amount: 100,
@@ -156,7 +156,7 @@ function makeDeal(store, overrides) {
 
 function makeMilestone(store, dealId, overrides) {
   const ms = {
-    id: `ms-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: '11111111-2222-4333-8444-555555555555',
     deal_id: dealId,
     sequence: 1,
     label: 'Prototype',
@@ -338,7 +338,7 @@ test('all milestones confirmed: parent deal auto-finalizes', async () => {
   const fakeEscrow = makeFakeEscrow();
   const deal = makeDeal(store, { amount: 60 });
   const ms1 = makeMilestone(store, deal.id, { sequence: 1, amount: 30, status: 'confirmed', release_tx: 'tx-1' });
-  const ms2 = makeMilestone(store, deal.id, { sequence: 2, amount: 30, status: 'shipped' });
+  const ms2 = makeMilestone(store, deal.id, { id: '66666666-7777-4888-8999-aaaaaaaaaaaa', sequence: 2, amount: 30, status: 'shipped' });
 
   await withServer(store, fakeEscrow, async (base) => {
     const res = await fetch(`${base}/deals/${deal.id}/milestones/${ms2.id}/confirm`, {
