@@ -4,7 +4,7 @@ const { buildLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, fo
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { StellarSdk, networkPassphrase } = require('../config/stellar');
-const { IdParamSchema, CreateDealSchema, SubmitLockSchema } = require('../validation/schemas');
+const { IdParamSchema, CreateDealSchema, SubmitLockSchema, LockTxQuerySchema } = require('../validation/schemas');
 const { canTransition } = require('../services/dealStateMachine');
 const { logTransition, expireIfStale } = require('../services/dealTransitions');
 const router = Router();
@@ -14,16 +14,18 @@ const ESCROW_PUBLIC = process.env.ESCROW_PUBLIC_KEY;
 
 // GET /api/deals/lock-tx?amount=&dealId=
 // Returns an unsigned XDR the buyer can sign client-side.
-router.get('/lock-tx', requireAuth, async (req, res) => {
+router.get('/lock-tx', requireAuth, validate(LockTxQuerySchema, 'query'), async (req, res) => {
   const { amount, dealId } = req.query;
-  if (!amount || !dealId) return res.status(400).json({ error: 'amount and dealId are required' });
-  if (Number(amount) <= 0) return res.status(400).json({ error: 'amount must be a positive number' });
-  
+
   const { data: deal, error: fetchErr } = await supabase
     .from('deals').select('*').eq('id', dealId).single();
   if (fetchErr) return res.status(404).json({ error: 'Deal not found' });
   if (deal.buyer !== req.wallet) return res.status(403).json({ error: 'Not the buyer' });
   if (!canTransition(deal.status, 'locking')) return res.status(400).json({ error: 'Invalid deal status' });
+  // The XDR is built from deal.amount; a mismatched query amount means the
+  // client is out of sync with what will actually be locked.
+  if (formatAmount(amount) !== formatAmount(deal.amount))
+    return res.status(400).json({ error: 'amount does not match deal amount' });
 
   try {
     const xdr = await buildLockTx(req.wallet, ESCROW_PUBLIC, deal.amount, dealId);

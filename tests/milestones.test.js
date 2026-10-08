@@ -98,7 +98,7 @@ function makeFakeEscrow() {
       submitSignedTx: async () => { throw new Error('not used in this test'); },
       verifyTransaction: async () => ({ verified: true }),
       formatAmount: (amt) => Number(amt).toFixed(7),
-      USDC_ASSET: { code: 'USDC', issuer: 'GA5ZSEJYB37JDD5G4LYXOKMWSUVC5HBH724QZDU5DHVJ76SCZGR5SOY3' },
+      getUsdcAsset: () => ({ code: 'USDC', issuer: 'TESTISSUER' }),
     },
     calls,
     control,

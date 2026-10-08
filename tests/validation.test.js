@@ -14,6 +14,7 @@ const {
   CreateDealSchema,
   CreateUserSchema,
   RoleSchema,
+  LockTxQuerySchema,
 } = require('../src/validation/schemas');
 
 // Fixtures ------------------------------------------------------------------
@@ -123,7 +124,10 @@ test('ConversationsQuerySchema/MessagesQuerySchema: require a UUID', () => {
 
 test('CreateConversationSchema/CreateMessageSchema: validate ids and body', () => {
   assert.ok(CreateConversationSchema.safeParse({ listing_id: UUID, buyer_id: UUID, seller_id: UUID }).success);
-  assert.equal(CreateConversationSchema.safeParse({ listing_id: UUID, buyer_id: UUID }).success, false);
+  // buyer_id/seller_id are optional — derived from the authenticated session
+  assert.ok(CreateConversationSchema.safeParse({ listing_id: UUID, buyer_id: UUID }).success);
+  assert.ok(CreateConversationSchema.safeParse({ listing_id: UUID }).success);
+  assert.equal(CreateConversationSchema.safeParse({ buyer_id: UUID }).success, false);
   assert.ok(CreateMessageSchema.safeParse({ conversation_id: UUID, sender_id: UUID, body: 'hi' }).success);
   assert.equal(CreateMessageSchema.safeParse({ conversation_id: UUID, sender_id: UUID, body: '' }).success, false);
 });
@@ -146,6 +150,28 @@ test('CreateDealSchema: a secret in the body is ignored, not stored', () => {
   assert.equal('buyerSecret' in r.data, false);
 });
 
+// LockTxQuerySchema ----------------------------------------------------------
+test('LockTxQuerySchema: accepts a valid amount and UUID dealId', () => {
+  const r = LockTxQuerySchema.safeParse({ dealId: UUID, amount: '100' });
+  assert.ok(r.success);
+  assert.equal(r.data.amount, 100);
+});
+
+test('LockTxQuerySchema: rejects non-numeric, non-positive, and non-finite amounts', () => {
+  // Number("abc") is NaN and NaN <= 0 is false — the old bare <= 0 check
+  // let these through to the Stellar builder.
+  assert.equal(LockTxQuerySchema.safeParse({ dealId: UUID, amount: 'abc' }).success, false);
+  assert.equal(LockTxQuerySchema.safeParse({ dealId: UUID, amount: '100 XLM' }).success, false);
+  assert.equal(LockTxQuerySchema.safeParse({ dealId: UUID, amount: '-5' }).success, false);
+  assert.equal(LockTxQuerySchema.safeParse({ dealId: UUID, amount: '0' }).success, false);
+  assert.equal(LockTxQuerySchema.safeParse({ dealId: UUID, amount: 'Infinity' }).success, false);
+});
+
+test('LockTxQuerySchema: rejects a missing or malformed dealId', () => {
+  assert.equal(LockTxQuerySchema.safeParse({ amount: '1' }).success, false);
+  assert.equal(LockTxQuerySchema.safeParse({ dealId: 'not-a-uuid', amount: '1' }).success, false);
+});
+
 // users schemas -------------------------------------------------------------
 test('RoleSchema: accepts the enum and rejects everything else', () => {
   for (const role of ['buyer', 'seller', 'both']) {
@@ -156,8 +182,9 @@ test('RoleSchema: accepts the enum and rejects everything else', () => {
   assert.equal(RoleSchema.safeParse({}).success, false);
 });
 
-test('CreateUserSchema: requires a valid Stellar wallet', () => {
+test('CreateUserSchema: wallet is optional (session-derived) but must be valid when present', () => {
+  // wallet is optional — derived from the authenticated session server-side
+  assert.ok(CreateUserSchema.safeParse({}).success);
   assert.ok(CreateUserSchema.safeParse({ wallet: PUBLIC }).success);
   assert.equal(CreateUserSchema.safeParse({ wallet: 'not-a-wallet' }).success, false);
-  assert.equal(CreateUserSchema.safeParse({}).success, false);
 });

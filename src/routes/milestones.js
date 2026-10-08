@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const supabase = require('../config/supabase');
-const { releaseFunds, USDC_ASSET } = require('../services/escrow');
+const { releaseFunds, getUsdcAsset } = require('../services/escrow');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { IdParamSchema, MilestoneParamsSchema, CreateMilestoneDealSchema } = require('../validation/schemas');
@@ -189,7 +189,7 @@ router.post(
         deal.seller,
         milestone.amount,
         id,
-        USDC_ASSET,
+        getUsdcAsset(),
       );
 
       await supabase

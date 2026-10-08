@@ -135,6 +135,14 @@ const SubmitLockSchema = z.object({
   signedXdr: z.string().min(1),
 });
 
+// GET /api/deals/lock-tx — amount and dealId arrive as query strings.
+// Number("abc") is NaN and NaN <= 0 is false, so a bare numeric check lets
+// non-numeric strings through; z.coerce.number().finite() rejects them.
+const LockTxQuerySchema = z.object({
+  dealId: uuid,
+  amount: z.coerce.number().finite().positive(),
+});
+
 // fiat payments -------------------------------------------------------------
 
 const InitiateFiatPaymentSchema = z.object({
@@ -207,6 +215,7 @@ module.exports = {
   CreateMilestoneDealSchema,
   MilestoneParamsSchema,
   SubmitLockSchema,
+  LockTxQuerySchema,
   InitiateFiatPaymentSchema,
   FiatWebhookSchema,
   CreateCrossChainDepositSchema,

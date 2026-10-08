@@ -4,9 +4,18 @@ const { logger } = require('../lib/logger');
 
 const BASE_FEE = '100';
 
-// USDC on Stellar — testnet issuer used when USDC_ISSUER env is not set.
-const USDC_ISSUER = process.env.USDC_ISSUER || 'GA5ZSEJYB37JDD5G4LYXOKMWSUVC5HBH724QZDU5DHVJ76SCZGR5SOY3';
-const USDC_ASSET  = new StellarSdk.Asset('USDC', USDC_ISSUER);
+// USDC on Stellar — set USDC_ISSUER in the environment. Resolved lazily so
+// importing this module (e.g. for dealMemo/formatAmount unit tests) does not
+// require a valid issuer to be configured.
+const USDC_ISSUER = process.env.USDC_ISSUER;
+let _usdcAsset = null;
+function getUsdcAsset() {
+  if (!_usdcAsset) {
+    if (!USDC_ISSUER) throw new Error('USDC_ISSUER env var is required for USDC operations');
+    _usdcAsset = new StellarSdk.Asset('USDC', USDC_ISSUER);
+  }
+  return _usdcAsset;
+}
 
 /**
  * Returns true for transient Stellar errors that are safe to retry.
@@ -109,7 +118,7 @@ async function buildUsdcLockTx(buyerPublic, escrowPublic, amount, dealId) {
     .addOperation(
       StellarSdk.Operation.payment({
         destination: escrowPublic,
-        asset: USDC_ASSET,
+        asset: getUsdcAsset(),
         amount: String(amount),
       })
     )
@@ -235,4 +244,4 @@ async function getUsdcBalance(accountPublic) {
   }
 }
 
-module.exports = { buildLockTx, buildUsdcLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount, USDC_ASSET, USDC_ISSUER, getUsdcBalance };
+module.exports = { buildLockTx, buildUsdcLockTx, submitSignedTx, releaseFunds, refund, verifyTransaction, dealMemo, formatAmount, getUsdcAsset, USDC_ISSUER, getUsdcBalance };
