@@ -43,7 +43,7 @@ const TRANSITIONS = {
   cancelling:   ['cancelled'],
   confirmed:    [],
   cancelled:    [],
-  disputed:     [],
+  disputed:     ['confirmed', 'cancelled'],
   expired:      [],
 };
 

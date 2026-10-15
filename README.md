@@ -78,11 +78,14 @@ The API handles user management, social feed, marketplace listings, real-time ch
 
 | Method | Route | Description |
 |---|---|---|
-| `POST` | `/api/deals` | Create escrow deal — build Stellar tx, lock XLM, store in DB |
+| `POST` | `/api/deals` | Create escrow deal — build Stellar tx, lock XLM, store in DB (auto-classifies tier) |
 | `GET` | `/api/deals` | Fetch deals for a user (as buyer or seller) |
+| `GET` | `/api/deals/tiers/config` | View deal tier threshold ($5,000 default) and approved signer weights |
 | `POST` | `/api/deals/:id/ship` | Seller marks deal as shipped |
 | `POST` | `/api/deals/:id/confirm` | Buyer confirms receipt — release funds via Stellar tx |
 | `POST` | `/api/deals/:id/dispute` | Either party raises a dispute |
+| `GET` | `/api/deals/:id/dispute-resolutions` | Query votes and majority resolution status for disputed deals |
+| `POST` | `/api/deals/:id/dispute-resolutions` | Arbiter/signer casts vote (2-of-3 majority resolves dispute) |
 | `POST` | `/api/deals/:id/cancel` | Buyer cancels before shipment — refund via Stellar tx |
 | `GET` | `/api/deals/:id/transitions` | Audit trail of status changes for a deal |
 | `GET` | `/api/deals/:id/verify` | Check each recorded transaction hash against Horizon |

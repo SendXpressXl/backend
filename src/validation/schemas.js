@@ -106,6 +106,12 @@ const CreateDealSchema = z.object({
   seller: stellarPublicKey,
   amount: price,
   description: z.string().min(1).max(2000),
+  deal_tier: z.enum(['standard', 'high_value']).optional(),
+});
+
+const DisputeVoteSchema = z.object({
+  vote: z.enum(['release_seller', 'refund_buyer']),
+  note: z.string().max(1000).optional(),
 });
 
 const MilestoneParamsSchema = z.object({
@@ -205,6 +211,7 @@ module.exports = {
   MarkReadSchema,
   CreateDealSchema,
   CreateMilestoneDealSchema,
+  DisputeVoteSchema,
   MilestoneParamsSchema,
   SubmitLockSchema,
   InitiateFiatPaymentSchema,

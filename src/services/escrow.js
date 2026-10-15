@@ -5,7 +5,7 @@ const { logger } = require('../lib/logger');
 const BASE_FEE = '100';
 
 // USDC on Stellar — testnet issuer used when USDC_ISSUER env is not set.
-const USDC_ISSUER = process.env.USDC_ISSUER || 'GA5ZSEJYB37JDD5G4LYXOKMWSUVC5HBH724QZDU5DHVJ76SCZGR5SOY3';
+const USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const USDC_ASSET  = new StellarSdk.Asset('USDC', USDC_ISSUER);
 
 /**
