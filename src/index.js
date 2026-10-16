@@ -5,6 +5,7 @@ const cors    = require('cors');
 const { logger }        = require('./lib/logger');
 const { requestLogger } = require('./middleware/requestLogger');
 const { errorHandler }  = require('./middleware/errorHandler');
+const { rejectSecretKeys } = require('./middleware/rejectSecretKeys');
 const { rateLimit }     = require('./middleware/rateLimit');
 const { issueChallenge, verifySignature, requireAuth, logout } = require('./middleware/auth');
 
@@ -36,6 +37,7 @@ process.on('uncaughtException', (err) => {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(rejectSecretKeys);
 app.use(requestLogger);
 app.use(rateLimit(100, 60_000));
 
